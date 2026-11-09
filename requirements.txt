@@ -1,0 +1,6 @@
+# Web Dashboard & Visualization
+Flask>=2.0.0
+Pillow>=9.0.0
+
+# Forensic PDF Reporting
+reportlab>=3.6.0

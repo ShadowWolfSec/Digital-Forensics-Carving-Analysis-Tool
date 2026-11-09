@@ -1,0 +1,969 @@
+{% extends "base.html" %}
+
+{% block title %}Scan Results - Digital Forensics Tool{% endblock %}
+{% block header_title %}Scan Results & Forensic Evidence{% endblock %}
+
+{% block nav_actions %}
+  {% if files|length > 0 %}
+  <button type="button" class="btn-export" id="exportAllBtn" onclick="openExportModal(null)">
+    📦 Export All Files ({{ files|length }})
+  </button>
+  <button type="button" class="btn btn-gray" id="exportSelectedBtn" onclick="exportSelectedFiles()" disabled>
+    📦 Export Selected (0)
+  </button>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+
+  <div class="card">
+    <div class="summary-label">Target Overview</div>
+    <div style="font-size:14px; color:#334155; margin-bottom:8px;"><b>Source:</b> {{ summary.source }} ({{ summary.source_type }})</div>
+    <div class="summary-grid">
+      <div class="summary-box">
+        <div class="summary-label">Total Items</div>
+        <div class="summary-val" style="color:#2563eb;">{{ summary.files_found }}</div>
+      </div>
+      <div class="summary-box">
+        <div class="summary-label">Primary Files</div>
+        <div class="summary-val" style="color:#4338ca;">{{ summary.get('primary_files_count', files|selectattr('is_embedded', 'equalto', false)|list|length) }}</div>
+      </div>
+      <div class="summary-box">
+        <div class="summary-label">Embedded Artifacts</div>
+        <div class="summary-val" style="color:#d97706;">{{ summary.get('embedded_artifacts_count', files|selectattr('is_embedded', 'equalto', true)|list|length) }}</div>
+      </div>
+      <div class="summary-box">
+        <div class="summary-label">Data Scanned</div>
+        <div class="summary-val">{{ summary.bytes_scanned_human }}</div>
+      </div>
+      <div class="summary-box">
+        <div class="summary-label">Duration</div>
+        <div class="summary-val">{{ summary.duration_seconds }}s</div>
+      </div>
+      <div class="summary-box">
+        <div class="summary-label">Blocks Scanned</div>
+        <div class="summary-val">{{ summary.blocks_scanned }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <h3 style="margin:0; font-size:16px;">Recovered Evidence Files ({{ files|length }})</h3>
+      <div class="tab-group">
+        <button type="button" class="tab-btn active" data-filter="all" onclick="applyTabFilter('all')">All Items ({{ files|length }})</button>
+        <button type="button" class="tab-btn" data-filter="primary" onclick="applyTabFilter('primary')">Primary Files ({{ files|selectattr('is_embedded', 'equalto', false)|list|length }})</button>
+        <button type="button" class="tab-btn" data-filter="embedded" onclick="applyTabFilter('embedded')">Embedded Artifacts ({{ files|selectattr('is_embedded', 'equalto', true)|list|length }})</button>
+        <button type="button" class="tab-btn" id="groupByContainerBtn" onclick="setGroupingMode('container')">Group by Container</button>
+        <button type="button" class="tab-btn" id="groupByTypeBtn" onclick="setGroupingMode('type')">Group by Type</button>
+      </div>
+    </div>
+
+    <!-- Column Filter Bar -->
+    <div class="filter-bar">
+      <div class="filter-group filter-search">
+        <input type="text" id="filterSearch" class="filter-input" style="width:100%;" placeholder="🔍 Search (ID, Format, Offset, File Origin...)" oninput="onFilterChange()">
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Role:</span>
+        <select id="filterRole" class="filter-select" onchange="onFilterChange()">
+          <option value="all">All Roles</option>
+          <option value="primary">Primary</option>
+          <option value="embedded">Embedded</option>
+          <option value="recovered">Recovered</option>
+          <option value="mismatch">Mismatch</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Format:</span>
+        <select id="filterFormat" class="filter-select" onchange="onFilterChange()">
+          <option value="all">All Formats</option>
+          <!-- Dynamically populated -->
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Status:</span>
+        <select id="filterStatus" class="filter-select" onchange="onFilterChange()">
+          <option value="all">All Status</option>
+          <option value="COMPLETE">Complete</option>
+          <option value="PARTIAL">Partial</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Confidence:</span>
+        <select id="filterConfidence" class="filter-select" onchange="onFilterChange()">
+          <option value="0">All Confidences</option>
+          <option value="90">&ge; 90%</option>
+          <option value="80">&ge; 80%</option>
+          <option value="50">&ge; 50%</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Size:</span>
+        <select id="filterSize" class="filter-select" onchange="onFilterChange()">
+          <option value="all">All Sizes</option>
+          <option value="tiny">&lt; 100 KB</option>
+          <option value="small">100 KB - 1 MB</option>
+          <option value="medium">1 MB - 10 MB</option>
+          <option value="large">&gt; 10 MB</option>
+        </select>
+      </div>
+      <button type="button" class="btn-reset" onclick="resetFilters()">Reset Filters</button>
+      <div class="filter-badge" id="filterStats">Showing {{ files|length }} of {{ files|length }}</div>
+    </div>
+
+    <!-- Selection Bar -->
+    <div class="selection-bar" id="selectionBar" style="display:none;">
+      <div>
+        <strong id="selectedCountText">0 items selected</strong>
+        <span style="color:#64748b; margin-left:8px;">(Actions apply to checked items only)</span>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label style="font-size:12px; cursor:pointer;">
+          <input type="checkbox" id="organizeFoldersChk" checked> Organize into type subfolders
+        </label>
+        <button type="button" class="btn-export" style="padding:4px 10px; font-size:12px;" onclick="exportSelectedFiles()">
+          Export Selected Files &rarr;
+        </button>
+        <button type="button" id="compareSelectedBtn" class="btn" style="padding:4px 10px; font-size:12px; background:#4f46e5; display:none;" onclick="compareSelectedFiles()">
+          ⚖️ Compare 2 Selected
+        </button>
+        <button type="button" class="btn-reset" onclick="clearSelection()">Clear Selection</button>
+      </div>
+    </div>
+
+    {% if files|length == 0 %}
+      <div style="padding:16px; color:#64748b; text-align:center;">No files recovered from this target.</div>
+    {% else %}
+    <div style="overflow-x:auto;">
+    <table id="evidenceTable">
+      <thead>
+        <tr>
+          <th style="width:28px; text-align:center;">
+            <input type="checkbox" id="selectAllChk" onchange="toggleSelectAll(this.checked)" title="Select/Deselect All Visible">
+          </th>
+          <th class="sortable" data-sort="id" onclick="sortTable('id')">ID</th>
+          <th class="sortable" data-sort="role" onclick="sortTable('role')">Type / Role</th>
+          <th class="sortable" data-sort="format" onclick="sortTable('format')">File Format</th>
+          <th class="sortable" data-sort="offset" onclick="sortTable('offset')">Start Offset</th>
+          <th class="sortable" data-sort="size" onclick="sortTable('size')">Size</th>
+          <th class="sortable" data-sort="confidence" onclick="sortTable('confidence')">Confidence</th>
+          <th class="sortable" data-sort="status" onclick="sortTable('status')">Status</th>
+          <th class="sortable" data-sort="origin" onclick="sortTable('origin')">File Origin</th>
+          <th style="min-width:170px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in files %}
+        <tr class="evidence-row" 
+            data-id="{{ f.id }}"
+            data-role="{% if f.artifact_type == 'embedded' or f.is_embedded %}embedded{% elif f.artifact_type == 'recovered' %}recovered{% else %}primary{% endif %}"
+            data-format="{{ f.extension|lower }}"
+            data-type-name="{{ f.type_name }}"
+            data-category="{{ f.signature.category|lower if f.signature else 'other' }}"
+            data-offset="{{ f.start_offset }}"
+            data-size="{{ f.size }}"
+            data-confidence="{{ (f.confidence * 100)|round|int }}"
+            data-status="{{ f.recovery_status }}"
+            data-origin="{{ f.metadata.get('source_file', summary.source) }}"
+            data-is-embedded="{{ '1' if f.is_embedded else '0' }}">
+          <td style="text-align:center;">
+            <input type="checkbox" class="file-chk" value="{{ f.id }}" onchange="onRowSelectionChange()">
+          </td>
+          <td><b>#{{ f.id }}</b></td>
+          <td>
+            {% if f.artifact_type == 'embedded' or f.is_embedded %}
+              <span class="badge badge-embedded">EMBEDDED</span>
+            {% elif f.artifact_type == 'recovered' %}
+              <span class="badge badge-recovered">RECOVERED</span>
+            {% else %}
+              <span class="badge badge-primary">PRIMARY</span>
+            {% endif %}
+            {% if f.metadata.get('extension_mismatch') %}
+              <span class="badge badge-mismatch" title="Extension does not match actual signature">MISMATCH</span>
+            {% endif %}
+          </td>
+          <td>{{ f.type_name }} (.{{ f.extension }})</td>
+          <td style="font-family:monospace; color:#d97706;">0x{{ "%X"|format(f.start_offset) }}</td>
+          <td>{{ f.size }} B</td>
+          <td><b>{{ "%.0f"|format(f.confidence * 100) }}%</b></td>
+          <td>
+            {% if f.recovery_status == 'COMPLETE' %}
+              <span class="badge badge-complete">COMPLETE</span>
+            {% else %}
+              <span class="badge badge-partial">{{ f.recovery_status }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size:11px; color:#475569; max-width:200px; word-break:break-all;">
+            {{ f.metadata.get('source_file', summary.source) }}
+          </td>
+          <td style="white-space: nowrap;">
+            <button type="button" class="btn-preview" onclick="openPreview({{ f.id }})" title="Quick Preview File">
+              👁️ Preview
+            </button>
+            <span style="color:#cbd5e1; margin: 0 4px;">|</span>
+            <a class="btn-download" href="/api/download/{{ f.id }}" download title="Download Recovered File">
+              ⬇️ Save
+            </a>
+            <span style="color:#cbd5e1; margin: 0 4px;">|</span>
+            <a class="btn-inspect" href="/hex?source={{ f.metadata.get('source_file', summary.source) }}&offset={{ f.start_offset }}">
+              Hex &rarr;
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ML AI Triage Card -->
+  <div class="card">
+    <div class="triage-header">
+      <div>
+        <h3 style="margin:0; font-size:16px; display:flex; align-items:center; gap:8px;">
+          <span>🧠 Machine Learning Forensic Triage & Threat Prioritization</span>
+          <span class="badge" style="background:#e0e7ff; color:#3730a3; font-size:11px;">ML Engine v2.0</span>
+        </h3>
+        <p style="margin:4px 0 0 0; font-size:12px; color:#64748b;">
+          Multi-modal heuristic & NLP semantic analysis: Leaked secrets, financial data, packed executables, visual forensics & entropy.
+        </p>
+      </div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <span class="badge badge-critical">Critical: {{ triage|selectattr('priority', 'equalto', 'critical')|list|length }}</span>
+        <span class="badge badge-high">High: {{ triage|selectattr('priority', 'equalto', 'high')|list|length }}</span>
+        <span class="badge badge-medium">Medium: {{ triage|selectattr('priority', 'equalto', 'medium')|list|length }}</span>
+        <span class="badge badge-low">Low: {{ triage|selectattr('priority', 'equalto', 'low')|list|length }}</span>
+      </div>
+    </div>
+
+    <!-- Triage Filter Buttons -->
+    <div class="toolbar" style="margin-top:10px; margin-bottom:12px;">
+      <div class="tab-group">
+        <button type="button" class="tab-btn triage-tab-btn active" id="triageFilter_all" onclick="applyTriageFilter('all')">All Items ({{ triage|length }})</button>
+        <button type="button" class="tab-btn triage-tab-btn" id="triageFilter_critical" onclick="applyTriageFilter('critical')">🔴 Critical Only ({{ triage|selectattr('priority', 'equalto', 'critical')|list|length }})</button>
+        <button type="button" class="tab-btn triage-tab-btn" id="triageFilter_high" onclick="applyTriageFilter('high')">🟠 High & Above ({{ (triage|selectattr('priority', 'equalto', 'critical')|list|length) + (triage|selectattr('priority', 'equalto', 'high')|list|length) }})</button>
+        <button type="button" class="tab-btn triage-tab-btn" id="triageFilter_secrets" onclick="applyTriageFilter('secrets')">🔑 Secrets & Financial</button>
+        <button type="button" class="tab-btn triage-tab-btn" id="triageFilter_binaries" onclick="applyTriageFilter('binaries')">⚙️ Binaries / Threats</button>
+        <button type="button" class="tab-btn triage-tab-btn" id="triageFilter_visual" onclick="applyTriageFilter('visual')">🖼️ Visual & Scans</button>
+      </div>
+    </div>
+
+    {% if triage|length == 0 %}
+      <div style="color:#64748b; font-size:13px; text-align:center; padding:18px;">No triage warnings generated.</div>
+    {% else %}
+    <div style="overflow-x:auto;">
+    <table id="triageTable">
+      <thead>
+        <tr>
+          <th style="width:70px;">Item</th>
+          <th style="width:115px;">Priority</th>
+          <th style="width:130px;">Threat Score</th>
+          <th>Identified Risk & Semantic Topic</th>
+          <th>Explainable AI (XAI) Reasons</th>
+          <th style="width:130px; text-align:center;">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in triage %}
+        {% set t_score = t.get('threat_score', (t.score * 100)|int) %}
+        {% set prio = t.get('priority', 'low') %}
+        <tr class="triage-row"
+            data-priority="{{ prio }}"
+            data-topic="{{ t.get('doc_topic') or t.get('vision_category') or '' }}"
+            data-category="{{ t.get('category', '') }}">
+          <td>
+            <strong>#{{ t.file_id }}</strong>
+            <br>
+            <span class="badge" style="font-size:10px; background:#f1f5f9; color:#475569;">{{ t.get('category', 'unknown') }}</span>
+          </td>
+          <td>
+            {% if prio == 'critical' %}
+              <span class="badge badge-critical" style="font-size:12px; font-weight:700;">🔴 CRITICAL</span>
+            {% elif prio == 'high' %}
+              <span class="badge badge-high" style="font-size:12px; font-weight:700;">🟠 HIGH</span>
+            {% elif prio == 'medium' %}
+              <span class="badge badge-medium" style="font-size:12px; font-weight:700;">🟡 MEDIUM</span>
+            {% else %}
+              <span class="badge badge-low" style="font-size:12px; font-weight:700;">🟢 LOW</span>
+            {% endif %}
+          </td>
+          <td>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:700;">
+              <span>{{ t_score }}/100</span>
+              <span style="font-size:10px; font-weight:normal; color:#64748b;">Conf: {{ "%.0f"|format((t.get('ai_confidence', 0.70)) * 100) }}%</span>
+            </div>
+            <div class="triage-score-bar-bg">
+              <div class="triage-score-bar-fill" style="width:{{ t_score }}%;
+                background: {% if t_score >= 80 %}#ef4444{% elif t_score >= 60 %}#f97316{% elif t_score >= 35 %}#eab308{% else %}#10b981{% endif %};">
+              </div>
+            </div>
+          </td>
+          <td>
+            <div style="font-weight:600; font-size:13px; color:#111827; margin-bottom:2px;">
+              {{ t.get('risk_label') or t.get('risk', 'Benign Asset') }}
+            </div>
+            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+              {% if t.get('doc_topic') %}
+                <span class="triage-pill" style="background:#e0f2fe; color:#0369a1;">📄 {{ t.doc_topic }}</span>
+              {% endif %}
+              {% if t.get('vision_category') %}
+                <span class="triage-pill" style="background:#fce7f3; color:#be185d;">🖼️ {{ t.vision_category }}</span>
+              {% endif %}
+              {% if t.get('binary_details') and t.binary_details.get('packer') %}
+                <span class="triage-pill" style="background:#ede9fe; color:#6d28d9;">📦 {{ t.binary_details['packer'] }}</span>
+              {% endif %}
+            </div>
+          </td>
+          <td style="font-size:12px; color:#374151;">
+            <ul style="margin:0; padding-left:16px;">
+              {% for r in t.reasons %}
+              <li>{{ r }}</li>
+              {% endfor %}
+            </ul>
+          </td>
+          <td style="text-align:center; white-space:nowrap;">
+            <button type="button" class="btn-preview" onclick="openPreview({{ t.file_id }})" title="Quick Preview File">
+              👁️ Preview
+            </button>
+            <span style="color:#cbd5e1; margin: 0 4px;">|</span>
+            <a class="btn-inspect" href="/hex?source={{ summary.source }}" title="Inspect Raw Hex">
+              Hex &rarr;
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Timeline Card -->
+  <div class="card">
+    <h3 style="margin-top:0; font-size:15px;">📜 Custody & Forensic Timeline</h3>
+    {% if timeline|length == 0 %}
+      <div style="color:#64748b; font-size:13px;">No events recorded in timeline.</div>
+    {% else %}
+    <table>
+      <thead>
+        <tr><th>Timestamp</th><th>Event Type</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        {% for e in timeline %}
+        <tr>
+          <td style="font-size:11px; font-family:monospace; color:#64748b;">{{ e.timestamp }}</td>
+          <td><b>{{ e.event_type }}</b></td>
+          <td style="font-size:12px;">{{ e.description }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+{% endblock %}
+
+{% block modals %}
+  {% include "components/export_modal.html" %}
+  {% include "components/preview_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let currentTabFilter = 'all';
+    let currentGrouping = 'none'; // 'none' | 'container' | 'type'
+    let currentSortColumn = null;
+    let currentSortDirection = 'asc';
+    let currentPreviewId = null;
+    let visibleFileIds = [];
+    let exportPollTimer = null;
+
+    // Initialize formats dropdown
+    function initFormatDropdown() {
+      const formatSelect = document.getElementById('filterFormat');
+      if (!formatSelect) return;
+      const formats = new Set();
+      document.querySelectorAll('.evidence-row').forEach(row => {
+        const fmt = row.getAttribute('data-format');
+        if (fmt) formats.add(fmt.toUpperCase());
+      });
+      Array.from(formats).sort().forEach(fmt => {
+        const opt = document.createElement('option');
+        opt.value = fmt.toLowerCase();
+        opt.textContent = fmt;
+        formatSelect.appendChild(opt);
+      });
+    }
+
+    // Tab Filters (All, Primary, Embedded)
+    function applyTabFilter(tab) {
+      currentTabFilter = tab;
+      document.querySelectorAll('.tab-btn[data-filter]').forEach(b => {
+        b.classList.toggle('active', b.dataset.filter === tab);
+      });
+      applyAllFiltersAndGrouping();
+    }
+
+    // Grouping Modes
+    function setGroupingMode(mode) {
+      if (currentGrouping === mode) {
+        currentGrouping = 'none'; // toggle off
+      } else {
+        currentGrouping = mode;
+      }
+      document.getElementById('groupByContainerBtn').classList.toggle('active', currentGrouping === 'container');
+      document.getElementById('groupByTypeBtn').classList.toggle('active', currentGrouping === 'type');
+      applyAllFiltersAndGrouping();
+    }
+
+    // Filter Change Handler
+    function onFilterChange() {
+      applyAllFiltersAndGrouping();
+    }
+
+    function resetFilters() {
+      document.getElementById('filterSearch').value = '';
+      document.getElementById('filterRole').value = 'all';
+      document.getElementById('filterFormat').value = 'all';
+      document.getElementById('filterStatus').value = 'all';
+      document.getElementById('filterConfidence').value = '0';
+      document.getElementById('filterSize').value = 'all';
+      applyAllFiltersAndGrouping();
+    }
+
+    // Master filter and display function
+    function applyAllFiltersAndGrouping() {
+      const rows = Array.from(document.querySelectorAll('.evidence-row'));
+      const table = document.getElementById('evidenceTable');
+      if (!table) return;
+
+      const searchTerm = (document.getElementById('filterSearch').value || '').trim().toLowerCase();
+      const roleFilter = document.getElementById('filterRole').value;
+      const formatFilter = document.getElementById('filterFormat').value;
+      const statusFilter = document.getElementById('filterStatus').value;
+      const minConfidence = parseInt(document.getElementById('filterConfidence').value || '0', 10);
+      const sizeFilter = document.getElementById('filterSize').value;
+
+      // Remove previous group header rows
+      document.querySelectorAll('.group-header-row').forEach(el => el.remove());
+
+      visibleFileIds = [];
+      let visibleCount = 0;
+
+      rows.forEach(row => {
+        const id = row.getAttribute('data-id');
+        const role = row.getAttribute('data-role');
+        const format = row.getAttribute('data-format');
+        const typeName = row.getAttribute('data-type-name') || '';
+        const offset = row.getAttribute('data-offset');
+        const offsetHex = '0x' + parseInt(offset, 10).toString(16).toLowerCase();
+        const size = parseInt(row.getAttribute('data-size') || '0', 10);
+        const conf = parseInt(row.getAttribute('data-confidence') || '0', 10);
+        const status = row.getAttribute('data-status');
+        const origin = (row.getAttribute('data-origin') || '').toLowerCase();
+        const isEmbedded = row.getAttribute('data-is-embedded') === '1';
+
+        let show = true;
+
+        // Tab filter
+        if (currentTabFilter === 'primary' && isEmbedded) show = false;
+        if (currentTabFilter === 'embedded' && !isEmbedded) show = false;
+
+        // Role filter
+        if (roleFilter !== 'all') {
+          if (roleFilter === 'mismatch') {
+            const hasMismatch = row.querySelector('.badge-mismatch') !== null;
+            if (!hasMismatch) show = false;
+          } else if (role !== roleFilter) {
+            show = false;
+          }
+        }
+
+        // Format filter
+        if (formatFilter !== 'all' && format !== formatFilter) show = false;
+
+        // Status filter
+        if (statusFilter !== 'all' && status !== statusFilter) show = false;
+
+        // Confidence filter
+        if (conf < minConfidence) show = false;
+
+        // Size filter
+        if (sizeFilter === 'tiny' && size >= 100 * 1024) show = false;
+        if (sizeFilter === 'small' && (size < 100 * 1024 || size >= 1024 * 1024)) show = false;
+        if (sizeFilter === 'medium' && (size < 1024 * 1024 || size >= 10 * 1024 * 1024)) show = false;
+        if (sizeFilter === 'large' && size < 10 * 1024 * 1024) show = false;
+
+        // Text search
+        if (searchTerm) {
+          const combined = `#${id} ${format} ${typeName} ${offsetHex} ${offset} ${origin}`.toLowerCase();
+          if (!combined.includes(searchTerm)) show = false;
+        }
+
+        if (show) {
+          row.style.display = '';
+          visibleFileIds.push(parseInt(id, 10));
+          visibleCount++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      document.getElementById('filterStats').textContent = `Showing ${visibleCount} of ${rows.length}`;
+
+      // Handle Grouping
+      if (currentGrouping !== 'none') {
+        const tbody = table.querySelector('tbody');
+        const groups = {};
+
+        rows.forEach(row => {
+          if (row.style.display === 'none') return;
+          let groupKey = "Other";
+          if (currentGrouping === 'container') {
+            groupKey = row.getAttribute('data-origin') || "Unknown Origin";
+          } else if (currentGrouping === 'type') {
+            const cat = row.getAttribute('data-category') || "other";
+            const typeName = row.getAttribute('data-type-name') || cat;
+            groupKey = cat.toUpperCase() + " — " + typeName;
+          }
+
+          if (!groups[groupKey]) groups[groupKey] = [];
+          groups[groupKey].push(row);
+        });
+
+        Object.keys(groups).sort().forEach(groupKey => {
+          const groupRows = groups[groupKey];
+          const groupFileIds = groupRows.map(r => parseInt(r.getAttribute('data-id'), 10));
+          const headerRow = document.createElement('tr');
+          headerRow.className = 'group-header-row group-header';
+          
+          let icon = '📁';
+          if (currentGrouping === 'type') {
+            const keyLower = groupKey.toLowerCase();
+            if (keyLower.includes('image')) icon = '🖼️';
+            else if (keyLower.includes('doc') || keyLower.includes('pdf')) icon = '📄';
+            else if (keyLower.includes('video')) icon = '🎬';
+            else if (keyLower.includes('audio')) icon = '🎵';
+            else if (keyLower.includes('archive')) icon = '📦';
+            else if (keyLower.includes('executable')) icon = '⚙️';
+            else if (keyLower.includes('text')) icon = '📝';
+          }
+
+          headerRow.innerHTML = `
+            <td colspan="10" style="padding: 9px 12px; border-top: 2px solid #cbd5e1;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span style="font-size:14px; font-weight:700; color:#1e293b;">${icon} ${groupKey}</span>
+                  <span class="badge badge-primary">${groupRows.length} item(s)</span>
+                </div>
+                <div>
+                  <button type="button" class="btn-group-export" onclick="exportSpecificFiles(${JSON.stringify(groupFileIds)})">
+                    📦 Export This Group (${groupRows.length})
+                  </button>
+                </div>
+              </div>
+            </td>
+          `;
+          tbody.insertBefore(headerRow, groupRows[0]);
+        });
+      }
+
+      updateSelectedCount();
+    }
+
+    // Column Sorting
+    function sortTable(column) {
+      const table = document.getElementById('evidenceTable');
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('.evidence-row'));
+
+      if (currentSortColumn === column) {
+        currentSortDirection = (currentSortDirection === 'asc') ? 'desc' : 'asc';
+      } else {
+        currentSortColumn = column;
+        currentSortDirection = 'asc';
+      }
+
+      // Update header indicators
+      document.querySelectorAll('th.sortable').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === column) {
+          th.classList.add(currentSortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+      });
+
+      rows.sort((a, b) => {
+        let valA, valB;
+        if (column === 'id' || column === 'offset' || column === 'size' || column === 'confidence') {
+          valA = parseInt(a.getAttribute(`data-${column}`) || '0', 10);
+          valB = parseInt(b.getAttribute(`data-${column}`) || '0', 10);
+        } else {
+          valA = (a.getAttribute(`data-${column}`) || '').toLowerCase();
+          valB = (b.getAttribute(`data-${column}`) || '').toLowerCase();
+        }
+
+        if (valA < valB) return currentSortDirection === 'asc' ? -1 : 1;
+        if (valA > valB) return currentSortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      rows.forEach(r => tbody.appendChild(r));
+      applyAllFiltersAndGrouping();
+    }
+
+    // Selection logic
+    function toggleSelectAll(checked) {
+      document.querySelectorAll('.evidence-row').forEach(row => {
+        if (row.style.display !== 'none') {
+          const chk = row.querySelector('.file-chk');
+          if (chk) chk.checked = checked;
+        }
+      });
+      updateSelectedCount();
+    }
+
+    function onRowSelectionChange() {
+      updateSelectedCount();
+    }
+
+    function clearSelection() {
+      document.querySelectorAll('.file-chk').forEach(c => c.checked = false);
+      const selAll = document.getElementById('selectAllChk');
+      if (selAll) selAll.checked = false;
+      updateSelectedCount();
+    }
+
+    function getSelectedFileIds() {
+      const ids = [];
+      document.querySelectorAll('.file-chk:checked').forEach(c => {
+        ids.push(parseInt(c.value, 10));
+      });
+      return ids;
+    }
+
+    function updateSelectedCount() {
+      const selected = getSelectedFileIds();
+      const count = selected.length;
+      const bar = document.getElementById('selectionBar');
+      const btn = document.getElementById('exportSelectedBtn');
+      if (bar) bar.style.display = count > 0 ? 'flex' : 'none';
+      if (btn) {
+        btn.disabled = count === 0;
+        btn.textContent = `📦 Export Selected (${count})`;
+      }
+      const countText = document.getElementById('selectedCountText');
+      if (countText) countText.textContent = `${count} item(s) selected`;
+      const cmpBtn = document.getElementById('compareSelectedBtn');
+      if (cmpBtn) {
+        cmpBtn.style.display = count === 2 ? 'inline-flex' : 'none';
+      }
+    }
+
+    function compareSelectedFiles() {
+      const selected = getSelectedFileIds();
+      if (selected.length !== 2) {
+        alert("Please select exactly 2 files to compare.");
+        return;
+      }
+      window.location.href = `/compare?a=${selected[0]}&b=${selected[1]}`;
+    }
+
+    // File Preview Modal Logic
+    async function openPreview(fileId) {
+      currentPreviewId = fileId;
+      const modal = document.getElementById('previewModal');
+      const body = document.getElementById('previewBody');
+      const metaCard = document.getElementById('previewMetadataCard');
+      const title = document.getElementById('previewTitle');
+      const badges = document.getElementById('previewBadges');
+      const downloadLink = document.getElementById('previewDownloadLink');
+      const hexLink = document.getElementById('previewHexLink');
+
+      modal.style.display = 'flex';
+      body.innerHTML = '<div style="color:#64748b; padding:20px;">Loading file preview and metadata...</div>';
+      metaCard.innerHTML = '';
+      badges.innerHTML = '';
+
+      try {
+        const res = await fetch(`/api/preview-info/${fileId}`);
+        const data = await res.json();
+        if (!data.ok) {
+          body.innerHTML = `<div style="color:#ef4444; padding:20px;">Preview error: ${data.error}</div>`;
+          return;
+        }
+
+        title.textContent = `${data.filename} (#${data.id})`;
+        badges.innerHTML = `
+          <span class="badge badge-primary">${data.type}</span>
+          <span class="badge ${data.status === 'COMPLETE' ? 'badge-complete' : 'badge-partial'}">${data.status}</span>
+          <span class="badge badge-recovered">${formatBytes(data.size)}</span>
+          <span class="badge badge-primary">${(data.confidence * 100).toFixed(0)}% Confidence</span>
+        `;
+
+        downloadLink.href = `/api/download/${fileId}`;
+        hexLink.href = `/hex?source=${encodeURIComponent(data.metadata.source_file || '')}&offset=${data.start_offset}`;
+
+        // Render preview content based on type
+        if (data.is_image) {
+          body.innerHTML = `
+            <img src="/api/preview/${fileId}" class="preview-img" alt="${data.filename}">
+            <div style="font-size:12px; color:#6b7280; margin-top:8px;">${data.metadata.dimensions ? 'Dimensions: ' + data.metadata.dimensions : ''}</div>
+          `;
+        } else if (data.is_video) {
+          body.innerHTML = `
+            <video controls autoplay class="preview-media">
+              <source src="/api/preview/${fileId}">
+              Your browser does not support HTML5 video preview.
+            </video>
+          `;
+        } else if (data.is_audio) {
+          body.innerHTML = `
+            <div style="width:100%; padding:20px;">
+              <audio controls autoplay style="width:100%;">
+                <source src="/api/preview/${fileId}">
+                Your browser does not support HTML5 audio.
+              </audio>
+            </div>
+          `;
+        } else if (data.is_pdf) {
+          body.innerHTML = `
+            <iframe src="/api/preview/${fileId}" style="width:100%; height:450px; border:1px solid #cbd5e1; border-radius:6px;"></iframe>
+          `;
+        } else if (data.is_text) {
+          body.innerHTML = `
+            <div class="preview-text">${escapeHtml(data.text_content || 'No text content or empty file.')}</div>
+          `;
+        } else {
+          // Binary / Unsupported preview
+          body.innerHTML = `
+            <div style="width:100%; text-align:left;">
+              <div style="font-size:13px; font-weight:600; color:#374151; margin-bottom:6px;">Binary File Header Preview:</div>
+              <div class="preview-hex">${escapeHtml(data.hex_snippet || 'No header bytes readable.')}</div>
+            </div>
+          `;
+        }
+
+        // Render Metadata Details Table
+        let metaRows = `
+          <tr><td class="meta-key">Start Offset</td><td style="font-family:monospace; color:#d97706;">0x${data.start_offset.toString(16).toUpperCase()}</td></tr>
+          <tr><td class="meta-key">File Size</td><td>${data.size.toLocaleString()} bytes (${formatBytes(data.size)})</td></tr>
+          <tr><td class="meta-key">Validation</td><td>${data.validation || 'N/A'}</td></tr>
+        `;
+
+        if (data.hashes) {
+          metaRows += `
+            <tr><td class="meta-key">MD5 Hash</td><td style="font-family:monospace; font-size:11px;">${data.hashes.md5}</td></tr>
+            <tr><td class="meta-key">SHA-256 Hash</td><td style="font-family:monospace; font-size:11px;">${data.hashes.sha256}</td></tr>
+          `;
+        }
+        if (data.entropy !== null && data.entropy !== undefined) {
+          metaRows += `<tr><td class="meta-key">Shannon Entropy</td><td>${data.entropy}</td></tr>`;
+        }
+        if (data.metadata && data.metadata.exif) {
+          const exif = data.metadata.exif;
+          metaRows += `
+            <tr><td class="meta-key">EXIF Camera</td><td>${exif.Make || ''} ${exif.Model || ''}</td></tr>
+            <tr><td class="meta-key">EXIF Date</td><td>${exif.DateTime || 'N/A'}</td></tr>
+          `;
+        }
+
+        metaCard.innerHTML = `<table class="meta-table"><tbody>${metaRows}</tbody></table>`;
+      } catch (err) {
+        body.innerHTML = `<div style="color:#ef4444; padding:20px;">Failed loading preview: ${err}</div>`;
+      }
+    }
+
+    function closePreviewModal() {
+      document.getElementById('previewModal').style.display = 'none';
+      const body = document.getElementById('previewBody');
+      if (body) body.innerHTML = '';
+      currentPreviewId = null;
+    }
+
+    function navigatePreview(step) {
+      if (!visibleFileIds || visibleFileIds.length === 0 || currentPreviewId === null) return;
+      const idx = visibleFileIds.indexOf(currentPreviewId);
+      if (idx === -1) return;
+      let nextIdx = idx + step;
+      if (nextIdx < 0) nextIdx = visibleFileIds.length - 1;
+      if (nextIdx >= visibleFileIds.length) nextIdx = 0;
+      openPreview(visibleFileIds[nextIdx]);
+    }
+
+    // Keyboard navigation for preview
+    window.addEventListener('keydown', function(e) {
+      const modal = document.getElementById('previewModal');
+      if (modal && modal.style.display === 'flex') {
+        if (e.key === 'Escape') closePreviewModal();
+        if (e.key === 'ArrowLeft') navigatePreview(-1);
+        if (e.key === 'ArrowRight') navigatePreview(1);
+      }
+    });
+
+    // Export Modal Logic
+    let pendingExportIds = null;
+
+    function openExportModal(fileIds) {
+      pendingExportIds = fileIds;
+      startExportProcess(fileIds);
+    }
+
+    function exportSelectedFiles() {
+      const selected = getSelectedFileIds();
+      if (selected.length === 0) {
+        alert("Please select at least one file to export.");
+        return;
+      }
+      openExportModal(selected);
+    }
+
+    function exportSpecificFiles(fileIds) {
+      if (!fileIds || fileIds.length === 0) return;
+      openExportModal(fileIds);
+    }
+
+    async function startExportProcess(fileIds) {
+      const organize = document.getElementById('organizeFoldersChk') ? document.getElementById('organizeFoldersChk').checked : true;
+      try {
+        const res = await fetch('/api/export-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file_ids: fileIds, organize_by_type: organize })
+        });
+        const data = await res.json();
+        if (data.canceled) {
+          return; // user canceled folder picker
+        }
+        if (!data.ok) {
+          alert("Export error: " + (data.error || "Unknown"));
+          return;
+        }
+
+        // Open live export progress modal
+        const modal = document.getElementById('exportModal');
+        modal.style.display = 'flex';
+        document.getElementById('exportPulseDot').style.background = '#10b981';
+        document.getElementById('exportModalTitle').textContent = 'Exporting Recovered Files';
+        document.getElementById('exportStatusText').textContent = 'Writing carved files to disk...';
+        document.getElementById('exportFeedbackMsg').textContent = '';
+        document.getElementById('exportTargetText').textContent = data.target_dir || '-';
+        document.getElementById('stopExportBtn').style.display = 'inline-flex';
+        document.getElementById('stopExportBtn').disabled = false;
+        document.getElementById('closeExportBtn').style.display = 'none';
+
+        startExportPolling();
+      } catch (err) {
+        alert("Failed to start export: " + err);
+      }
+    }
+
+    function startExportPolling() {
+      if (exportPollTimer) clearInterval(exportPollTimer);
+      exportPollTimer = setInterval(pollExportProgress, 350);
+      pollExportProgress();
+    }
+
+    async function pollExportProgress() {
+      try {
+        const res = await fetch('/api/export/progress');
+        const data = await res.json();
+
+        if (data.status === 'idle') return;
+
+        const pct = Math.min(100, Math.max(0, data.percent || 0));
+        document.getElementById('exportProgressFill').style.width = pct + '%';
+        document.getElementById('exportProgressBarText').textContent = pct.toFixed(1) + '%';
+        document.getElementById('exportPercentText').textContent = pct.toFixed(1) + '%';
+
+        document.getElementById('exportElapsed').textContent = data.elapsed_str || '00:00';
+        document.getElementById('exportETA').textContent = data.eta_str || '--:--';
+        document.getElementById('exportSpeed').textContent = (data.speed_mb_s || 0).toFixed(1) + ' MB/s';
+        document.getElementById('exportFilesCount').textContent = `${data.exported_files || 0} / ${data.total_files || 0}`;
+        document.getElementById('exportCurrentFile').textContent = data.current_file || '-';
+
+        if (data.target_dir) {
+          document.getElementById('exportTargetText').textContent = data.target_dir;
+        }
+
+        if (data.status === 'stopping') {
+          document.getElementById('exportStatusText').textContent = 'Stopping export... finalizing files...';
+          document.getElementById('exportPulseDot').style.background = '#f59e0b';
+          document.getElementById('stopExportBtn').disabled = true;
+        } else if (data.status === 'completed' || data.status === 'stopped') {
+          clearInterval(exportPollTimer);
+          exportPollTimer = null;
+          document.getElementById('exportProgressFill').style.width = '100%';
+          document.getElementById('exportProgressBarText').textContent = '100%';
+          document.getElementById('exportPulseDot').style.background = '#2563eb';
+          document.getElementById('exportStatusText').textContent = data.status === 'completed' ? '✅ Export Completed Successfully!' : '🛑 Export Stopped';
+          document.getElementById('exportFeedbackMsg').textContent = `Exported ${data.exported_files} files to folder.`;
+          document.getElementById('stopExportBtn').style.display = 'none';
+          document.getElementById('closeExportBtn').style.display = 'inline-flex';
+        } else if (data.status === 'error') {
+          clearInterval(exportPollTimer);
+          exportPollTimer = null;
+          document.getElementById('exportPulseDot').style.background = '#ef4444';
+          document.getElementById('exportStatusText').textContent = '❌ Export Error: ' + (data.error || 'Unknown');
+          document.getElementById('stopExportBtn').style.display = 'none';
+          document.getElementById('closeExportBtn').style.display = 'inline-flex';
+        }
+      } catch (e) {
+        console.error("Export poll error:", e);
+      }
+    }
+
+    async function stopExport() {
+      try {
+        const btn = document.getElementById('stopExportBtn');
+        btn.disabled = true;
+        btn.textContent = 'Stopping...';
+        await fetch('/api/export/stop', { method: 'POST' });
+      } catch (e) {
+        alert("Failed stopping export: " + e);
+      }
+    }
+
+    function closeExportModal() {
+      document.getElementById('exportModal').style.display = 'none';
+    }
+
+    // Triage Filtering
+    function applyTriageFilter(filter) {
+      document.querySelectorAll('.triage-tab-btn').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('triageFilter_' + filter);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      const rows = document.querySelectorAll('.triage-row');
+      rows.forEach(r => {
+        const priority = r.getAttribute('data-priority');
+        const topic = (r.getAttribute('data-topic') || '').toLowerCase();
+        const category = (r.getAttribute('data-category') || '').toLowerCase();
+        const text = r.innerText.toLowerCase();
+
+        let show = true;
+        if (filter === 'all') {
+          show = true;
+        } else if (filter === 'critical') {
+          show = (priority === 'critical');
+        } else if (filter === 'high') {
+          show = (priority === 'critical' || priority === 'high');
+        } else if (filter === 'secrets') {
+          show = (topic.includes('credential') || topic.includes('financial') || topic.includes('confidential') || text.includes('credential') || text.includes('secret') || text.includes('financial'));
+        } else if (filter === 'binaries') {
+          show = (category === 'executable' || text.includes('executable') || text.includes('yara') || text.includes('packed'));
+        } else if (filter === 'visual') {
+          show = (category === 'image' || topic.includes('scan') || topic.includes('screenshot') || text.includes('steganography'));
+        }
+        r.style.display = show ? '' : 'none';
+      });
+    }
+
+    // Initialize page
+    window.addEventListener('DOMContentLoaded', () => {
+      initFormatDropdown();
+      applyAllFiltersAndGrouping();
+    });
+  </script>
+{% endblock %}

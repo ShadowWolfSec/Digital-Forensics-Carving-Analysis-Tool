@@ -1,0 +1,60 @@
+<!-- Live Export Progress Modal Component -->
+<div id="exportModal" class="modal" style="display:none;">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 style="margin:0; display:flex; align-items:center;">
+        <span class="pulse-dot" id="exportPulseDot"></span>
+        <span id="exportModalTitle">Exporting Recovered Files</span>
+      </h3>
+    </div>
+    
+    <div style="font-size:13px; color:#4b5563; margin-bottom:8px;">
+      Destination Folder: <strong id="exportTargetText" style="font-family:monospace; color:#1e40af;">-</strong>
+    </div>
+
+    <div class="progress-box">
+      <div style="display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:#374151;">
+        <span id="exportStatusText">Writing carved files to disk...</span>
+        <span id="exportPercentText" style="color:#10b981;">0.0%</span>
+      </div>
+
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="exportProgressFill"></div>
+        <div class="progress-bar-text" id="exportProgressBarText">0%</div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="lbl">⏱️ Elapsed</div>
+          <div class="val" id="exportElapsed">00:00:00</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">⏳ ETA</div>
+          <div class="val" id="exportETA">--:--:--</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">⚡ Speed</div>
+          <div class="val" id="exportSpeed">0.0 MB/s</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">📦 Files</div>
+          <div class="val" id="exportFilesCount">0 / 0</div>
+        </div>
+      </div>
+
+      <div style="font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb; padding-top:8px;">
+        Writing file: <span id="exportCurrentFile" style="font-family:monospace; color:#111827; font-weight:600;">-</span>
+      </div>
+    </div>
+
+    <div style="margin-top:16px; display:flex; justify-content:space-between; align-items:center;">
+      <button type="button" class="btn" style="background:#ef4444;" id="stopExportBtn" onclick="stopExport()">
+        🛑 Cancel Export
+      </button>
+      <button type="button" class="btn" id="closeExportBtn" style="display:none;" onclick="closeExportModal()">
+        Close
+      </button>
+      <div id="exportFeedbackMsg" style="font-size:13px; font-weight:600; color:#059669;"></div>
+    </div>
+  </div>
+</div>

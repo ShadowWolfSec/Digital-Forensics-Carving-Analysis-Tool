@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}Interactive Hex Viewer - Digital Forensics Tool{% endblock %}
+{% block header_title %}🔬 Interactive Binary Stream Hex Viewer{% endblock %}
+
+{% block extra_head %}
+<style>
+  .hex-card {
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 18px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .hex-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .hex-controls input, .hex-controls select, .hex-controls button {
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #f1f5f9;
+    font-size: 13px;
+  }
+  .hex-controls input:focus, .hex-controls select:focus {
+    outline: none;
+    border-color: #3b82f6;
+  }
+  .hex-controls button {
+    cursor: pointer;
+    background: #2563eb;
+    border: none;
+    font-weight: 600;
+  }
+  .hex-controls button:hover { background: #1d4ed8; }
+  .btn-hex-secondary { background: #334155 !important; }
+  .btn-hex-secondary:hover { background: #475569 !important; }
+  .status-bar {
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: #94a3b8;
+    min-height: 18px;
+  }
+  .error { color: #f87171; font-weight: 600; }
+  .table-container {
+    overflow-x: auto;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    background: #111827;
+  }
+  .hex-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-family: Consolas, monospace;
+  }
+  .hex-table td, .hex-table th {
+    border-bottom: 1px solid #1e293b;
+    padding: 6px 12px;
+    vertical-align: top;
+  }
+  .hex-table th {
+    color: #93c5fd;
+    text-align: left;
+    background: #1e293b;
+    font-weight: 600;
+  }
+  .off { color: #fbbf24; width: 130px; font-weight: 600; }
+  .hex { color: #6ee7b7; font-family: monospace; letter-spacing: 1px; }
+  .ascii { color: #f472b6; white-space: pre; border-left: 1px solid #334155; padding-left: 14px; }
+  .hl { background: #b91c1c; color: #ffffff; padding: 1px 3px; border-radius: 3px; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="hex-card">
+    {% if available_files and available_files|length > 0 %}
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+      <label style="font-size:13px; color:#94a3b8; white-space:nowrap;">Directory Files ({{ available_files|length }}):</label>
+      <select id="fileDropdown" onchange="onFileSelected(this.value)" style="flex:1; background:#1e293b; color:#f1f5f9; border:1px solid #334155; padding:6px 10px; border-radius:6px;">
+        {% for f in available_files %}
+          <option value="{{ f }}" {% if f == source %}selected{% endif %}>{{ f }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+
+    <div class="hex-controls">
+      <input id="source" value="{{ source }}" style="min-width:320px; flex:1;" placeholder="File or raw device path" />
+      <button class="btn-hex-secondary" type="button" onclick="pickPath('source', 'file')">Browse</button>
+      <button class="btn-hex-secondary" type="button" onclick="openDriveModal('source')">Drives</button>
+      <label style="display:flex; align-items:center; gap:4px; font-size:12px;">Offset:
+        <input id="offset" type="number" min="0" value="{{ offset or 0 }}" style="width:100px;" />
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; font-size:12px;">Length:
+        <input id="length" type="number" min="16" max="8192" value="512" style="width:80px;" />
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; font-size:12px;">Width:
+        <select id="width" style="width:70px;">
+          <option value="16" selected>16</option>
+          <option value="24">24</option>
+          <option value="32">32</option>
+        </select>
+      </label>
+      <input id="search" placeholder="Search hex (e.g. FF D8 or PK)" style="min-width:180px;" />
+      <button onclick="loadHex()">Go</button>
+      <button class="btn-hex-secondary" onclick="prevPage()">&larr; Prev</button>
+      <button class="btn-hex-secondary" onclick="nextPage()">Next &rarr;</button>
+    </div>
+
+    <div class="status-bar" id="statusBar">
+      {% if error %}<span class="error">{{ error }}</span>{% endif %}
+    </div>
+
+    <div class="table-container">
+      <table class="hex-table">
+        <thead><tr><th>Offset</th><th>Hex View</th><th>ASCII View</th></tr></thead>
+        <tbody id="hexBody"></tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+
+{% block modals %}
+  {% include "components/drive_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let nextOffset = 0;
+    let prevOffsetVal = 0;
+
+    function normHex(s) {
+      return s.replace(/\s+/g, " ").trim().toUpperCase();
+    }
+
+    function onFileSelected(path) {
+      document.getElementById("source").value = path;
+      document.getElementById("offset").value = 0;
+      loadHex();
+    }
+
+    async function loadHex() {
+      const source = document.getElementById("source").value.trim();
+      const offset = document.getElementById("offset").value || "0";
+      const length = document.getElementById("length").value || "512";
+      const width = document.getElementById("width").value || "16";
+      const status = document.getElementById("statusBar");
+
+      if (!source) {
+        status.innerHTML = `<span class="error">Please provide a valid source path.</span>`;
+        return;
+      }
+
+      status.textContent = "Loading hex data...";
+      try {
+        const res = await fetch(`/api/hex?source=${encodeURIComponent(source)}&offset=${offset}&length=${length}&width=${width}`);
+        const data = await res.json();
+        if (data.error) {
+          status.innerHTML = `<span class="error">${data.error}</span>`;
+          document.getElementById("hexBody").innerHTML = "";
+          return;
+        }
+
+        nextOffset = data.next_offset;
+        prevOffsetVal = data.prev_offset;
+        status.textContent = `Showing offset 0x${parseInt(offset).toString(16).toUpperCase()} to 0x${(parseInt(offset) + data.length).toString(16).toUpperCase()} (${data.length} bytes loaded)`;
+        renderRows(data.rows);
+      } catch (err) {
+        status.innerHTML = `<span class="error">Network/Server error: ${err}</span>`;
+      }
+    }
+
+    function renderRows(rows) {
+      const q = normHex(document.getElementById("search").value);
+      const body = document.getElementById("hexBody");
+      body.innerHTML = "";
+
+      if (!rows || rows.length === 0) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="3" style="text-align:center; color:#94a3b8; padding:20px;">End of file reached or no bytes read.</td>`;
+        body.appendChild(tr);
+        return;
+      }
+
+      rows.forEach(r => {
+        const tr = document.createElement("tr");
+        const off = document.createElement("td");
+        off.className = "off";
+        off.textContent = "0x" + r.offset.toString(16).toUpperCase().padStart(8, "0");
+
+        const hx = document.createElement("td");
+        hx.className = "hex";
+        let hexText = r.hex;
+        if (q && hexText.includes(q)) {
+          hexText = hexText.split(q).join(`<span class="hl">${q}</span>`);
+          hx.innerHTML = hexText;
+        } else {
+          hx.textContent = hexText;
+        }
+
+        const asc = document.createElement("td");
+        asc.className = "ascii";
+        asc.textContent = r.ascii;
+
+        tr.appendChild(off);
+        tr.appendChild(hx);
+        tr.appendChild(asc);
+        body.appendChild(tr);
+      });
+    }
+
+    function nextPage() {
+      document.getElementById("offset").value = nextOffset;
+      loadHex();
+    }
+
+    function prevPage() {
+      document.getElementById("offset").value = prevOffsetVal;
+      loadHex();
+    }
+
+    document.getElementById("search").addEventListener("input", () => loadHex());
+    document.getElementById("width").addEventListener("change", () => loadHex());
+    loadHex();
+  </script>
+{% endblock %}

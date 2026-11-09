@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+
+{% block title %}MFT Explorer & Deleted Records Recovery - Digital Forensics Tool{% endblock %}
+{% block header_title %}🗂️ NTFS MFT Explorer & Deleted Records Recovery{% endblock %}
+
+{% block content %}
+  <!-- Search Scope Card -->
+  <div class="card">
+    <div class="card-title">
+      <span>Target NTFS Source & MFT Record Scope</span>
+    </div>
+
+    <form id="mftForm" onsubmit="event.preventDefault(); startMftScan();">
+      <div class="row">
+        <div>
+          <label>Target Drive / Disk Image / File *</label>
+          <div class="field">
+            <input id="source_path" name="source_path" required
+              placeholder="e.g. H:\evidence.dd or \\.\PhysicalDrive0 or C:\$MFT"
+              value="{{ default_source }}">
+            <button class="browse" type="button" onclick="pickPath('source_path', 'file')">File</button>
+            <button class="browse" type="button" onclick="pickPath('source_path', 'dir')">Folder</button>
+            <button class="browse" type="button" onclick="openDriveModal('source_path')">Drives</button>
+          </div>
+        </div>
+
+        <div>
+          <label>Scan Scope (Optional)</label>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <div>
+              <input id="start_offset" placeholder="Start Offset (e.g. 0)" value="0">
+            </div>
+            <div>
+              <input id="max_bytes" placeholder="Max Bytes (e.g. 104857600 for 100MB)">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px;">
+        <button type="button" id="btnStop" class="btn btn-red" style="display:none;" onclick="stopMftScan()">
+          ⏹ Stop Scan
+        </button>
+        <button type="submit" id="btnStart" class="btn" style="padding:10px 22px; font-size:14px;">
+          🗂️ Scan MFT Records & Recover Deleted Metadata
+        </button>
+      </div>
+    </form>
+
+    <!-- Live Scanning HUD -->
+    <div id="progressHud" class="progress-box" style="display:none; margin-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-size:13px; font-weight:700; color:#1e293b; display:flex; align-items:center;">
+          <span class="pulse-dot"></span>
+          <span id="hudStatus">Searching for MFT record signatures (FILE)...</span>
+        </div>
+        <div id="hudPctText" style="font-size:13px; font-weight:700; color:#2563eb;">0%</div>
+      </div>
+
+      <div class="progress-bar-bg">
+        <div id="hudFill" class="progress-bar-fill"></div>
+        <div id="hudBarText" class="progress-bar-text">0.0%</div>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+        <div class="stat-card">
+          <div class="lbl">Elapsed</div>
+          <div class="val" id="hudElapsed">00:00:00</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Remaining ETA</div>
+          <div class="val" id="hudEta">--:--:--</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Speed</div>
+          <div class="val" id="hudSpeed">0.0 MB/s</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Records Found</div>
+          <div class="val" id="hudRecords" style="color:#2563eb;">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Deleted Files</div>
+          <div class="val" id="hudDeleted" style="color:#dc2626;">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Scanned</div>
+          <div class="val" id="hudBytes">0 MB</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Records Evidence Table Card -->
+  <div class="card" id="recordsCard" style="display:none;">
+    <div class="card-title">
+      <span>Parsed MFT Records (<span id="totalRecordsCount">0</span>)</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-green" onclick="exportMft('csv')">📄 Export CSV</button>
+        <button class="btn btn-green" onclick="exportMft('json')">📦 Export JSON</button>
+      </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+      <div class="category-pills">
+        <div class="cat-pill active" onclick="filterRecords('all', this)">All (<span id="cnt_all">0</span>)</div>
+        <div class="cat-pill" onclick="filterRecords('deleted', this)">🗑️ Deleted (<span id="cnt_deleted">0</span>)</div>
+        <div class="cat-pill" onclick="filterRecords('active', this)">✅ Active (<span id="cnt_active">0</span>)</div>
+        <div class="cat-pill" onclick="filterRecords('directory', this)">📁 Directories (<span id="cnt_directory">0</span>)</div>
+        <div class="cat-pill" onclick="filterRecords('resident', this)">💾 Resident Data (<span id="cnt_resident">0</span>)</div>
+      </div>
+      <div>
+        <input id="tableSearch" placeholder="Quick search filename / path..." oninput="onSearchTable(this.value)"
+          style="padding:6px 10px; font-size:12px; width:240px;">
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:60px;">Record #</th>
+            <th style="width:90px;">Status</th>
+            <th>Original Filename</th>
+            <th>Reconstructed Path</th>
+            <th style="width:110px;">Size</th>
+            <th style="width:160px;">Created Time (UTC)</th>
+            <th style="width:160px;">Modified Time (UTC)</th>
+            <th style="width:120px;">Offset (Hex)</th>
+            <th style="width:130px; text-align:center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="recordsBody">
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+
+{% block modals %}
+  {% include "components/drive_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let pollInterval = null;
+    let allRecords = [];
+    let currentFilter = 'all';
+    let searchQuery = '';
+
+    async function startMftScan() {
+      const src = document.getElementById('source_path').value.trim();
+      if (!src) {
+        alert('Please specify a source path.');
+        return;
+      }
+      const startOff = document.getElementById('start_offset').value.trim();
+      const maxBytes = document.getElementById('max_bytes').value.trim();
+
+      document.getElementById('btnStart').style.display = 'none';
+      document.getElementById('btnStop').style.display = 'inline-flex';
+      document.getElementById('progressHud').style.display = 'block';
+      document.getElementById('recordsCard').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/mft/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_path: src,
+            start_offset: startOff,
+            max_bytes: maxBytes,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          alert('Failed to start MFT scan: ' + (data.error || 'Unknown error'));
+          resetButtons();
+          return;
+        }
+
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(pollProgress, 500);
+      } catch (err) {
+        alert('Request failed: ' + err);
+        resetButtons();
+      }
+    }
+
+    async function pollProgress() {
+      try {
+        const res = await fetch('/api/mft/progress');
+        const st = await res.json();
+
+        const pct = Math.min(100, Math.max(0, st.percent || 0));
+        document.getElementById('hudFill').style.width = pct + '%';
+        document.getElementById('hudBarText').innerText = pct.toFixed(1) + '%';
+        document.getElementById('hudPctText').innerText = pct.toFixed(1) + '%';
+
+        document.getElementById('hudElapsed').innerText = st.elapsed_str || '00:00:00';
+        document.getElementById('hudEta').innerText = st.eta_str || '--:--:--';
+        document.getElementById('hudSpeed').innerText = (st.speed_mb_s || 0).toFixed(1) + ' MB/s';
+        document.getElementById('hudRecords').innerText = st.records_found || 0;
+        document.getElementById('hudDeleted').innerText = st.deleted_count || 0;
+
+        const mbScanned = (st.current_bytes / (1024 * 1024)).toFixed(1);
+        const mbTotal = (st.total_bytes / (1024 * 1024)).toFixed(1);
+        document.getElementById('hudBytes').innerText = st.total_bytes > 0 ? `${mbScanned} / ${mbTotal} MB` : `${mbScanned} MB`;
+
+        if (st.status === 'completed' || st.status === 'stopped' || st.status === 'error') {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          resetButtons();
+          document.getElementById('hudStatus').innerText = st.status === 'completed' ? 'Scan Completed!' : (st.status === 'error' ? 'Scan Error' : 'Scan Stopped.');
+          await fetchResults();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function stopMftScan() {
+      try {
+        await fetch('/api/mft/stop', { method: 'POST' });
+        document.getElementById('hudStatus').innerText = 'Stopping...';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function resetButtons() {
+      document.getElementById('btnStart').style.display = 'inline-flex';
+      document.getElementById('btnStop').style.display = 'none';
+    }
+
+    async function fetchResults() {
+      try {
+        const res = await fetch('/api/mft/results');
+        const data = await res.json();
+        if (data.ok) {
+          allRecords = data.records || [];
+          document.getElementById('recordsCard').style.display = 'block';
+          updateCounts();
+          renderTable();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    function updateCounts() {
+      const counts = { all: allRecords.length, deleted: 0, active: 0, directory: 0, resident: 0 };
+      allRecords.forEach(r => {
+        if (r.is_deleted) counts.deleted++;
+        else counts.active++;
+        if (r.is_directory) counts.directory++;
+        if (r.has_resident_data) counts.resident++;
+      });
+      document.getElementById('totalRecordsCount').innerText = counts.all;
+      document.getElementById('cnt_all').innerText = counts.all;
+      document.getElementById('cnt_deleted').innerText = counts.deleted;
+      document.getElementById('cnt_active').innerText = counts.active;
+      document.getElementById('cnt_directory').innerText = counts.directory;
+      document.getElementById('cnt_resident').innerText = counts.resident;
+    }
+
+    function filterRecords(f, pillEl) {
+      currentFilter = f;
+      document.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
+      pillEl.classList.add('active');
+      renderTable();
+    }
+
+    function onSearchTable(q) {
+      searchQuery = q.toLowerCase().trim();
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('recordsBody');
+      tbody.innerHTML = '';
+
+      let filtered = allRecords;
+      if (currentFilter === 'deleted') filtered = filtered.filter(r => r.is_deleted);
+      else if (currentFilter === 'active') filtered = filtered.filter(r => !r.is_deleted);
+      else if (currentFilter === 'directory') filtered = filtered.filter(r => r.is_directory);
+      else if (currentFilter === 'resident') filtered = filtered.filter(r => r.has_resident_data);
+
+      if (searchQuery) {
+        filtered = filtered.filter(r => {
+          return (r.filename && r.filename.toLowerCase().includes(searchQuery)) ||
+                 (r.full_path && r.full_path.toLowerCase().includes(searchQuery)) ||
+                 (r.created_time && r.created_time.toLowerCase().includes(searchQuery)) ||
+                 (r.modified_time && r.modified_time.toLowerCase().includes(searchQuery)) ||
+                 (r.record_number.toString().includes(searchQuery));
+        });
+      }
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:24px; color:#9ca3af;">No matching MFT records found.</td></tr>';
+        return;
+      }
+
+      const sourceVal = encodeURIComponent(document.getElementById('source_path').value.trim());
+
+      filtered.forEach(rec => {
+        const tr = document.createElement('tr');
+        const statusBadge = rec.is_deleted
+          ? '<span class="badge badge-deleted">🗑️ DELETED</span>'
+          : '<span class="badge badge-active">✅ ACTIVE</span>';
+        const typeBadge = rec.is_directory
+          ? '<span class="badge badge-dir" style="margin-left:4px;">📁 DIR</span>'
+          : '';
+        const residentBadge = rec.has_resident_data
+          ? `<span class="badge badge-resident" title="${rec.resident_size} bytes resident data payload">💾 ${rec.resident_size}B</span>`
+          : '';
+
+        tr.innerHTML = `
+          <td style="font-family:monospace; color:#475569;">#${rec.record_number}</td>
+          <td>${statusBadge} ${typeBadge}</td>
+          <td><b>${rec.filename}</b></td>
+          <td style="font-family:monospace; font-size:12px; color:#334155; word-break:break-all;">${rec.full_path}</td>
+          <td>${formatBytes(rec.file_size)} ${residentBadge}</td>
+          <td style="font-size:12px; color:#475569;">${rec.created_time || '-'}</td>
+          <td style="font-size:12px; color:#475569;">${rec.modified_time || '-'}</td>
+          <td style="font-family:monospace; color:#2563eb; font-weight:600;">${rec.raw_offset_hex}</td>
+          <td style="text-align:center; white-space:nowrap;">
+            ${rec.has_resident_data ? `<a href="/api/mft/extract/${rec.record_number}" download="${rec.filename}" class="browse" style="padding:3px 7px; font-size:11px; color:#16a34a; text-decoration:none; margin-right:4px;">⬇️ Extract</a>` : ''}
+            <a href="/hex?source=${sourceVal}&offset=${rec.raw_offset}" target="_blank" class="browse" style="padding:3px 7px; font-size:11px; color:#2563eb; text-decoration:none;">🔬 Hex</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function exportMft(fmt) {
+      window.location.href = `/api/mft/export?fmt=${fmt}&filter=${currentFilter}`;
+    }
+
+    // Auto load if results already present
+    window.addEventListener('DOMContentLoaded', () => {
+      fetch('/api/mft/progress').then(r => r.json()).then(st => {
+        if (st.status === 'running') {
+          document.getElementById('btnStart').style.display = 'none';
+          document.getElementById('btnStop').style.display = 'inline-flex';
+          document.getElementById('progressHud').style.display = 'block';
+          pollInterval = setInterval(pollProgress, 500);
+        } else if (st.records_found > 0 || st.status === 'completed') {
+          fetchResults();
+        }
+      }).catch(() => {});
+    });
+  </script>
+{% endblock %}

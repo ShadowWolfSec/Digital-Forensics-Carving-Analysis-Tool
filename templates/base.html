@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Digital Forensics Suite{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/modals.css">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <div class="header-bar">
+    <h2>
+      {% block header_title %}🛡️ Digital Forensics Suite{% endblock %}
+    </h2>
+    <div class="header-nav">
+      {% block nav_actions %}{% endblock %}
+      <a href="/" class="btn btn-gray">🔍 New Scan</a>
+      <a href="/mft{% if default_source or (summary and summary.source) %}?source={{ default_source or summary.source }}{% endif %}" class="btn btn-gray">🗂️ MFT Explorer</a>
+      <a href="/compare" class="btn btn-gray">⚖️ Compare</a>
+      <a href="/search{% if default_source or (summary and summary.source) %}?source={{ default_source or summary.source }}{% endif %}" class="btn btn-gray">🔍 Pattern Search</a>
+      <a href="/hex{% if default_source or (summary and summary.source) %}?source={{ default_source or summary.source }}{% endif %}" class="btn">Open Hex</a>
+    </div>
+  </div>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block modals %}{% endblock %}
+
+  <script src="/static/js/common.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

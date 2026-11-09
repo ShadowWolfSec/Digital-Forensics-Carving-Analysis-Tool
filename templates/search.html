@@ -1,0 +1,540 @@
+{% extends "base.html" %}
+
+{% block title %}Pattern & PII Search - Digital Forensics Tool{% endblock %}
+{% block header_title %}🔍 Pattern & PII Search (Forensics & Regex){% endblock %}
+
+{% block content %}
+  <!-- Search Config Card -->
+  <div class="card">
+    <div class="card-title">
+      <span>Target Source & Search Scope</span>
+    </div>
+
+    <form id="searchForm" onsubmit="event.preventDefault(); startSearch();">
+      <div class="row">
+        <div>
+          <label>Source Path *</label>
+          <div class="field">
+            <input id="source_path" name="source_path" required
+              placeholder="e.g. H:\evidence.dd or \\.\PhysicalDrive0 or C:\file.bin"
+              value="{{ default_source }}">
+            <button class="browse" type="button" onclick="pickPath('source_path', 'file')">File</button>
+            <button class="browse" type="button" onclick="pickPath('source_path', 'dir')">Folder</button>
+            <button class="browse" type="button" onclick="openDriveModal('source_path')">Drives</button>
+          </div>
+        </div>
+
+        <div>
+          <label>Scope & Limits (Optional)</label>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+            <div>
+              <input id="start_offset" placeholder="Start Offset (e.g. 0 or 0x1000)" value="0">
+            </div>
+            <div>
+              <input id="max_bytes" placeholder="Max Bytes (e.g. 104857600 for 100MB)">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pattern Selectors -->
+      <label style="margin-top:10px;">Select Target Forensic Patterns:</label>
+      <div class="pattern-grid">
+        <label class="pattern-card active" id="lbl_cc">
+          <input type="checkbox" name="pattern" value="credit_card" checked onchange="toggleCard(this)">
+          <div class="pattern-info">
+            <div class="title">💳 Credit Cards</div>
+            <div class="desc">Luhn Mod-10 algorithm, Visa, MasterCard, Amex, Discover</div>
+          </div>
+        </label>
+
+        <label class="pattern-card active" id="lbl_email">
+          <input type="checkbox" name="pattern" value="email" checked onchange="toggleCard(this)">
+          <div class="pattern-info">
+            <div class="title">📧 Email Addresses</div>
+            <div class="desc">RFC-compliant formats with TLD filtering</div>
+          </div>
+        </label>
+
+        <label class="pattern-card active" id="lbl_ipv4">
+          <input type="checkbox" name="pattern" value="ipv4" checked onchange="toggleCard(this)">
+          <div class="pattern-info">
+            <div class="title">🌐 IPv4 Addresses</div>
+            <div class="desc">Routable addresses & LAN/Private detection</div>
+          </div>
+        </label>
+
+        <label class="pattern-card active" id="lbl_crypto">
+          <input type="checkbox" name="pattern" value="crypto" checked onchange="toggleCard(this)">
+          <div class="pattern-info">
+            <div class="title">🪙 Crypto Wallets</div>
+            <div class="desc">Bitcoin (P2PKH, P2SH, Bech32) & Ethereum</div>
+          </div>
+        </label>
+
+        <label class="pattern-card active" id="lbl_phone">
+          <input type="checkbox" name="pattern" value="phone" checked onchange="toggleCard(this)">
+          <div class="pattern-info">
+            <div class="title">📞 Phone Numbers</div>
+            <div class="desc">International & national telephone numbers</div>
+          </div>
+        </label>
+      </div>
+
+      <!-- Custom Regex -->
+      <div style="margin-top: 10px;">
+        <label>Custom Regular Expression (Optional)</label>
+        <div class="field">
+          <input id="custom_regex" placeholder="e.g. flag\{[^\}]+\} or (?:password|secret)\s*[:=]\s*\S+">
+        </div>
+        <div style="font-size:11px; color:#6b7280; margin-top:4px;">
+          Direct byte-level regex applied across memory buffers. Matched hits will appear under "Custom Pattern".
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
+        <div>
+          <button type="button" class="browse" onclick="setAllPatterns(true)">Select All</button>
+          <button type="button" class="browse" onclick="setAllPatterns(false)">Deselect All</button>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button type="button" id="btnStop" class="btn btn-red" style="display:none;" onclick="stopSearch()">
+            ⏹ Stop Search
+          </button>
+          <button type="submit" id="btnStart" class="btn" style="padding:10px 20px; font-size:14px;">
+            🚀 Start Pattern Search
+          </button>
+        </div>
+      </div>
+    </form>
+
+    <!-- Live Scanning Progress HUD -->
+    <div id="progressHud" class="progress-box" style="display:none; margin-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-size:13px; font-weight:700; color:#1e293b; display:flex; align-items:center;">
+          <span class="pulse-dot"></span>
+          <span id="hudStatus">Scanning binary stream...</span>
+        </div>
+        <div id="hudPctText" style="font-size:13px; font-weight:700; color:#2563eb;">0%</div>
+      </div>
+
+      <div class="progress-bar-bg">
+        <div id="hudFill" class="progress-bar-fill"></div>
+        <div id="hudBarText" class="progress-bar-text">0.0%</div>
+      </div>
+
+      <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+        <div class="stat-card">
+          <div class="lbl">Elapsed</div>
+          <div class="val" id="hudElapsed">00:00:00</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Remaining ETA</div>
+          <div class="val" id="hudEta">--:--:--</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Speed</div>
+          <div class="val" id="hudSpeed">0.0 MB/s</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Patterns Found</div>
+          <div class="val" id="hudHits" style="color:#2563eb;">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="lbl">Scanned</div>
+          <div class="val" id="hudBytes">0 MB</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results Evidence Card -->
+  <div class="card" id="resultsCard" style="display:none;">
+    <div class="card-title">
+      <span>Search Results & Forensic Hits (<span id="resultsCount">0</span>)</span>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-green" onclick="exportResults('csv')">📄 Export CSV</button>
+        <button class="btn btn-green" onclick="exportResults('json')">📦 Export JSON</button>
+      </div>
+    </div>
+
+    <!-- Filter & Filter Pills -->
+    <div class="filter-bar">
+      <div class="category-pills" id="categoryPills">
+        <div class="cat-pill active" onclick="filterCategory('all', this)">All (<span id="cnt_all">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('credit_card', this)">💳 Cards (<span id="cnt_credit_card">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('email', this)">📧 Emails (<span id="cnt_email">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('ipv4', this)">🌐 IPv4 (<span id="cnt_ipv4">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('crypto', this)">🪙 Crypto (<span id="cnt_crypto">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('phone', this)">📞 Phones (<span id="cnt_phone">0</span>)</div>
+        <div class="cat-pill" onclick="filterCategory('custom', this)">⚙️ Custom (<span id="cnt_custom">0</span>)</div>
+      </div>
+      <div>
+        <input id="tableSearch" placeholder="Quick search within hits..." oninput="onTableSearch(this.value)"
+          style="padding:6px 10px; font-size:12px; width:220px;">
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div style="overflow-x:auto;">
+      <table id="hitsTable">
+        <thead>
+          <tr>
+            <th style="width:40px;">#</th>
+            <th style="width:120px;">Category</th>
+            <th style="width:130px;">Type / Brand</th>
+            <th>Matched Value</th>
+            <th style="width:140px;">Offset (Hex)</th>
+            <th style="width:110px;">Offset (Dec)</th>
+            <th style="width:160px; text-align:center;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="hitsBody">
+          <!-- Dynamically populated -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}
+
+{% block modals %}
+  <!-- Context & Hex Preview Modal -->
+  <div id="contextModal" class="modal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle">Forensic Context & Hex Preview</h3>
+        <button class="close-btn" onclick="closeContextModal()">&times;</button>
+      </div>
+      <div style="font-size:13px; color:#475569; margin-bottom:12px;">
+        <span id="modalMeta">Offset: 0x00000000 | Category: ...</span>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>Matched Value:</label>
+        <div style="display:flex; justify-content:space-between; align-items:center; background:#f1f5f9; padding:8px 12px; border-radius:6px;">
+          <code id="modalMatchValue" style="font-weight:700; color:#1e293b; font-size:14px;"></code>
+          <button class="browse" type="button" onclick="copyModalValue()">Copy</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>Printable Context Snippet (ASCII):</label>
+        <div class="snippet-pre" id="modalSnippet"></div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <label>16-Byte Aligned Hex Dump:</label>
+        <pre class="hex-dump-pre" id="modalHexDump"></pre>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button class="btn btn-gray" onclick="closeContextModal()">Close</button>
+        <a id="modalHexViewerLink" href="#" class="btn" target="_blank">🔬 Open in Full Hex Viewer</a>
+      </div>
+    </div>
+  </div>
+
+  {% include "components/drive_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    let pollInterval = null;
+    let allHits = [];
+    let currentCategoryFilter = 'all';
+    let currentSearchQuery = '';
+
+    function toggleCard(chk) {
+      const parent = chk.closest('.pattern-card');
+      if (chk.checked) parent.classList.add('active');
+      else parent.classList.remove('active');
+    }
+
+    function setAllPatterns(enabled) {
+      document.querySelectorAll('.pattern-card input[type="checkbox"]').forEach(chk => {
+        chk.checked = enabled;
+        toggleCard(chk);
+      });
+    }
+
+    function getSelectedPatterns() {
+      const selected = [];
+      document.querySelectorAll('.pattern-card input[type="checkbox"]:checked').forEach(chk => {
+        selected.push(chk.value);
+      });
+      return selected;
+    }
+
+    async function startSearch() {
+      const source = document.getElementById('source_path').value.trim();
+      if (!source) {
+        alert('Please enter or select a source file, folder, or drive.');
+        return;
+      }
+      const patterns = getSelectedPatterns();
+      const customRegex = document.getElementById('custom_regex').value.trim();
+      if (patterns.length === 0 && !customRegex) {
+        alert('Please select at least one pattern or enter a custom regex.');
+        return;
+      }
+
+      const startOffset = document.getElementById('start_offset').value.trim();
+      const maxBytes = document.getElementById('max_bytes').value.trim();
+
+      document.getElementById('btnStart').style.display = 'none';
+      document.getElementById('btnStop').style.display = 'inline-flex';
+      document.getElementById('progressHud').style.display = 'block';
+      document.getElementById('resultsCard').style.display = 'none';
+
+      try {
+        const res = await fetch('/api/search/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_path: source,
+            patterns: patterns,
+            custom_regex: customRegex,
+            start_offset: startOffset,
+            max_bytes: maxBytes,
+          }),
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          alert('Failed to start search: ' + (data.error || 'Unknown error'));
+          resetButtons();
+          return;
+        }
+
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(pollProgress, 500);
+      } catch (err) {
+        alert('Request failed: ' + err);
+        resetButtons();
+      }
+    }
+
+    async function pollProgress() {
+      try {
+        const res = await fetch('/api/search/progress');
+        const st = await res.json();
+
+        const pct = Math.min(100, Math.max(0, st.percent || 0));
+        document.getElementById('hudFill').style.width = pct + '%';
+        document.getElementById('hudBarText').innerText = pct.toFixed(1) + '%';
+        document.getElementById('hudPctText').innerText = pct.toFixed(1) + '%';
+
+        document.getElementById('hudElapsed').innerText = st.elapsed_str || '00:00:00';
+        document.getElementById('hudEta').innerText = st.eta_str || '--:--:--';
+        document.getElementById('hudSpeed').innerText = (st.speed_mb_s || 0).toFixed(1) + ' MB/s';
+        document.getElementById('hudHits').innerText = st.hits_count || 0;
+
+        const mbScanned = (st.current_bytes / (1024 * 1024)).toFixed(1);
+        const mbTotal = (st.total_bytes / (1024 * 1024)).toFixed(1);
+        document.getElementById('hudBytes').innerText = st.total_bytes > 0 ? `${mbScanned} / ${mbTotal} MB` : `${mbScanned} MB`;
+
+        if (st.status === 'running') {
+          document.getElementById('hudStatus').innerText = 'Scanning binary stream...';
+        } else if (st.status === 'stopping') {
+          document.getElementById('hudStatus').innerText = 'Stopping search...';
+        } else if (st.status === 'completed' || st.status === 'stopped' || st.status === 'error') {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          resetButtons();
+
+          if (st.status === 'error') {
+            document.getElementById('hudStatus').innerText = 'Error: ' + (st.error || 'Scan failed');
+          } else {
+            document.getElementById('hudStatus').innerText = st.status === 'completed' ? 'Scan Completed!' : 'Scan Stopped.';
+          }
+          await fetchResults();
+        }
+      } catch (e) {
+        console.error('Poll error', e);
+      }
+    }
+
+    async function stopSearch() {
+      try {
+        await fetch('/api/search/stop', { method: 'POST' });
+        document.getElementById('hudStatus').innerText = 'Stopping...';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function resetButtons() {
+      document.getElementById('btnStart').style.display = 'inline-flex';
+      document.getElementById('btnStop').style.display = 'none';
+    }
+
+    async function fetchResults() {
+      try {
+        const res = await fetch('/api/search/results');
+        const data = await res.json();
+        if (data.ok) {
+          allHits = data.results || [];
+          document.getElementById('resultsCard').style.display = 'block';
+          updateCounts();
+          renderTable();
+        }
+      } catch (err) {
+        console.error('Failed to load results', err);
+      }
+    }
+
+    function updateCounts() {
+      const counts = { all: allHits.length, credit_card: 0, email: 0, ipv4: 0, crypto: 0, phone: 0, custom: 0 };
+      allHits.forEach(h => {
+        if (counts[h.category] !== undefined) counts[h.category]++;
+      });
+      document.getElementById('resultsCount').innerText = counts.all;
+      for (const [k, v] of Object.entries(counts)) {
+        const el = document.getElementById(`cnt_${k}`);
+        if (el) el.innerText = v;
+      }
+    }
+
+    function filterCategory(cat, pillEl) {
+      currentCategoryFilter = cat;
+      document.querySelectorAll('.cat-pill').forEach(p => p.classList.remove('active'));
+      pillEl.classList.add('active');
+      renderTable();
+    }
+
+    function onTableSearch(q) {
+      currentSearchQuery = q.toLowerCase().trim();
+      renderTable();
+    }
+
+    function getBadge(cat) {
+      const map = {
+        credit_card: '<span class="badge badge-cc">💳 Credit Card</span>',
+        email: '<span class="badge badge-email">📧 Email</span>',
+        ipv4: '<span class="badge badge-ip">🌐 IPv4</span>',
+        crypto: '<span class="badge badge-crypto">🪙 Crypto</span>',
+        phone: '<span class="badge badge-phone">📞 Phone</span>',
+        custom: '<span class="badge badge-custom">⚙️ Custom</span>',
+      };
+      return map[cat] || `<span class="badge badge-custom">${cat}</span>`;
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('hitsBody');
+      tbody.innerHTML = '';
+
+      let filtered = allHits;
+      if (currentCategoryFilter !== 'all') {
+        filtered = filtered.filter(h => h.category === currentCategoryFilter);
+      }
+      if (currentSearchQuery) {
+        filtered = filtered.filter(h => {
+          return (h.label && h.label.toLowerCase().includes(currentSearchQuery)) ||
+                 (h.value && h.value.toLowerCase().includes(currentSearchQuery)) ||
+                 (h.masked_value && h.masked_value.toLowerCase().includes(currentSearchQuery)) ||
+                 (h.offset_hex && h.offset_hex.toLowerCase().includes(currentSearchQuery)) ||
+                 (h.context_text && h.context_text.toLowerCase().includes(currentSearchQuery));
+        });
+      }
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:24px; color:#9ca3af;">No matching pattern hits found.</td></tr>';
+        return;
+      }
+
+      const sourceVal = encodeURIComponent(document.getElementById('source_path').value.trim());
+
+      filtered.forEach((hit, idx) => {
+        const tr = document.createElement('tr');
+        const isCC = hit.category === 'credit_card';
+        const displayVal = hit.masked_value || hit.value;
+
+        tr.innerHTML = `
+          <td style="color:#6b7280; font-family:monospace;">${hit.id || (idx + 1)}</td>
+          <td>${getBadge(hit.category)}</td>
+          <td><b>${hit.label || hit.category}</b></td>
+          <td style="font-family:monospace; word-break:break-all;">
+            <span id="val_text_${hit.id}">${displayVal}</span>
+            ${isCC ? `<button class="browse" style="padding:2px 6px; font-size:11px; margin-left:6px;" onclick="toggleMask(${hit.id}, '${hit.value}', '${hit.masked_value}')">Toggle</button>` : ''}
+          </td>
+          <td style="font-family:monospace; color:#2563eb; font-weight:600;">${hit.offset_hex}</td>
+          <td style="font-family:monospace; color:#475569;">${hit.offset}</td>
+          <td style="text-align:center;">
+            <button class="browse" style="padding:4px 8px; font-size:12px; margin-right:4px;" onclick="viewContext(${hit.id})">👁️ Context</button>
+            <a href="/hex?source=${sourceVal}&offset=${hit.offset}" target="_blank" class="browse" style="text-decoration:none; padding:4px 8px; font-size:12px; color:#2563eb;">🔬 Hex</a>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function toggleMask(id, rawVal, maskedVal) {
+      const el = document.getElementById(`val_text_${id}`);
+      if (!el) return;
+      if (el.innerText === maskedVal) {
+        el.innerText = rawVal;
+        el.style.color = '#dc2626';
+      } else {
+        el.innerText = maskedVal;
+        el.style.color = '';
+      }
+    }
+
+    function viewContext(hitId) {
+      const hit = allHits.find(h => h.id === hitId);
+      if (!hit) return;
+
+      document.getElementById('modalTitle').innerText = `${hit.label} - Offset ${hit.offset_hex}`;
+      document.getElementById('modalMeta').innerText = `Source: ${hit.source_file} | Absolute Offset: ${hit.offset} (0x${hit.offset.toString(16).toUpperCase()})`;
+      document.getElementById('modalMatchValue').innerText = hit.value;
+
+      // Format printable context with match highlighted
+      const ctxText = hit.context_text || '';
+      const matchVal = hit.value || '';
+      let highlightedSnippet = ctxText;
+      if (matchVal && ctxText.includes(matchVal)) {
+        highlightedSnippet = ctxText.replace(matchVal, `<span class="highlight-match">${matchVal}</span>`);
+      }
+      document.getElementById('modalSnippet').innerHTML = highlightedSnippet;
+
+      // Hex dump
+      document.getElementById('modalHexDump').innerText = hit.context_hex || 'No hex snippet available';
+
+      // Full hex viewer link
+      const sourceVal = encodeURIComponent(hit.source_file);
+      document.getElementById('modalHexViewerLink').href = `/hex?source=${sourceVal}&offset=${hit.offset}`;
+
+      document.getElementById('contextModal').style.display = 'flex';
+    }
+
+    function closeContextModal() {
+      document.getElementById('contextModal').style.display = 'none';
+    }
+
+    function copyModalValue() {
+      const val = document.getElementById('modalMatchValue').innerText;
+      navigator.clipboard.writeText(val).then(() => {
+        alert('Copied to clipboard: ' + val);
+      });
+    }
+
+    function exportResults(fmt) {
+      const cat = currentCategoryFilter;
+      window.location.href = `/api/search/export?fmt=${fmt}&category=${cat}`;
+    }
+
+    // Auto load existing results if already present on server
+    window.addEventListener('DOMContentLoaded', () => {
+      fetch('/api/search/progress').then(r => r.json()).then(st => {
+        if (st.status === 'running') {
+          document.getElementById('btnStart').style.display = 'none';
+          document.getElementById('btnStop').style.display = 'inline-flex';
+          document.getElementById('progressHud').style.display = 'block';
+          pollInterval = setInterval(pollProgress, 500);
+        } else if (st.hits_count > 0 || st.status === 'completed') {
+          fetchResults();
+        }
+      }).catch(() => {});
+    });
+  </script>
+{% endblock %}

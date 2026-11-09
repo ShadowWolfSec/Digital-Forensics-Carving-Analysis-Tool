@@ -1,0 +1,455 @@
+{% extends "base.html" %}
+
+{% block title %}Evidence Comparison & Tampering Analysis - Digital Forensics Tool{% endblock %}
+{% block header_title %}⚖️ Evidence Comparison & Tampering Analysis{% endblock %}
+
+{% block content %}
+  <!-- Comparison Selection Card -->
+  <div class="card">
+    <div class="card-title">
+      <span>Select Evidence Files to Compare</span>
+    </div>
+
+    <form id="compareForm" onsubmit="event.preventDefault(); runComparison();">
+      <div class="selector-grid">
+        <!-- File A Selection -->
+        <div class="file-box">
+          <h4>📄 Target Evidence (File A)</h4>
+          {% if carved_files %}
+          <label>Select from Recovered Files:</label>
+          <select id="select_a" onchange="onSelectChange('a')">
+            <option value="">-- Choose Recovered File --</option>
+            {% for f in carved_files %}
+            <option value="{{ f.id }}" {% if default_a==f.id|string %}selected{% endif %}>
+              #{{ f.id }} - {{ f.name }} ({{ (f.size / 1024)|round(1) }} KB)
+            </option>
+            {% endfor %}
+          </select>
+          <div style="text-align:center; font-size:11px; color:#9ca3af; margin: 4px 0;">— OR ENTER FILE PATH —</div>
+          {% endif %}
+          <label>External File Path:</label>
+          <div style="display:flex; gap:6px;">
+            <input id="path_a" placeholder="C:\path\to\original_file.ext" value="{% if default_a and not default_a.isdigit() %}{{ default_a }}{% endif %}">
+            <button class="browse" type="button" onclick="browseFile('a')">Browse</button>
+          </div>
+        </div>
+
+        <!-- File B Selection -->
+        <div class="file-box">
+          <h4>📄 Suspect / Modified (File B)</h4>
+          {% if carved_files %}
+          <label>Select from Recovered Files:</label>
+          <select id="select_b" onchange="onSelectChange('b')">
+            <option value="">-- Choose Recovered File --</option>
+            {% for f in carved_files %}
+            <option value="{{ f.id }}" {% if default_b==f.id|string %}selected{% endif %}>
+              #{{ f.id }} - {{ f.name }} ({{ (f.size / 1024)|round(1) }} KB)
+            </option>
+            {% endfor %}
+          </select>
+          <div style="text-align:center; font-size:11px; color:#9ca3af; margin: 4px 0;">— OR ENTER FILE PATH —</div>
+          {% endif %}
+          <label>External File Path:</label>
+          <div style="display:flex; gap:6px;">
+            <input id="path_b" placeholder="C:\path\to\suspect_file.ext" value="{% if default_b and not default_b.isdigit() %}{{ default_b }}{% endif %}">
+            <button class="browse" type="button" onclick="browseFile('b')">Browse</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="submit" id="btnCompare" class="btn" style="padding:10px 24px; font-size:14px;">
+          ⚖️ Compare Files & Detect Tampering
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Results Section -->
+  <div id="resultsContainer" style="display:none;">
+    <!-- Verdict Banner -->
+    <div class="card" style="padding: 16px 20px;">
+      <div class="verdict-banner" id="verdictBanner">
+        <div>
+          <div class="verdict-label">Forensic Comparison Verdict</div>
+          <div class="verdict-text" id="verdictText">Analyzing...</div>
+        </div>
+        <div id="verdictBadge"></div>
+      </div>
+
+      <!-- Core Metrics 4-Grid -->
+      <div class="metric-grid">
+        <!-- File Sizes -->
+        <div class="metric-card">
+          <div class="title">📁 File Size</div>
+          <div class="value" id="valSizeA">0 B</div>
+          <div class="subtitle" id="valSizeDiff">vs File B</div>
+        </div>
+
+        <!-- Fuzzy Hash Similarity -->
+        <div class="metric-card">
+          <div class="title">🧬 Fuzzy Hash (ssdeep)</div>
+          <div class="value" id="valFuzzyScore">0%</div>
+          <div class="gauge-bg">
+            <div id="gaugeFuzzy" class="gauge-fill" style="width:0%; background:#2563eb;"></div>
+          </div>
+          <div class="subtitle" id="valFuzzySubtitle">Context Piecewise Hashing</div>
+        </div>
+
+        <!-- Byte Similarity -->
+        <div class="metric-card">
+          <div class="title">🔬 Byte Identity</div>
+          <div class="value" id="valByteIdentity">0%</div>
+          <div class="gauge-bg">
+            <div id="gaugeByte" class="gauge-fill" style="width:0%; background:#10b981;"></div>
+          </div>
+          <div class="subtitle" id="valByteSubtitle">0 differing bytes</div>
+        </div>
+
+        <!-- Visual Image Similarity -->
+        <div class="metric-card" id="cardVisual" style="display:none;">
+          <div class="title">🖼️ Visual Match (pHash)</div>
+          <div class="value" id="valVisualScore">0%</div>
+          <div class="gauge-bg">
+            <div id="gaugeVisual" class="gauge-fill" style="width:0%; background:#8b5cf6;"></div>
+          </div>
+          <div class="subtitle" id="valVisualSubtitle">Perceptual DCT Analysis</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Image Comparison Card (if images) -->
+    <div class="card" id="imageComparisonCard" style="display:none;">
+      <div class="card-title">
+        <span>🖼️ Perceptual Image Comparison (Side-by-Side)</span>
+      </div>
+
+      <div class="image-preview-container">
+        <div class="img-preview-box">
+          <div style="font-weight:700; font-size:12px; margin-bottom:6px; color:#1e293b;" id="imgLabelA">File A</div>
+          <img id="imgSrcA" src="" alt="File A">
+        </div>
+
+        <div style="text-align:center;">
+          <div style="font-size:24px; font-weight:800; color:#2563eb;" id="imgScoreBig">100%</div>
+          <div style="font-size:11px; text-transform:uppercase; color:#6b7280; font-weight:700;">Visual Similarity</div>
+          <div style="margin-top:6px;" id="imgVerdictBadge"></div>
+        </div>
+
+        <div class="img-preview-box">
+          <div style="font-weight:700; font-size:12px; margin-bottom:6px; color:#1e293b;" id="imgLabelB">File B</div>
+          <img id="imgSrcB" src="" alt="File B">
+        </div>
+      </div>
+
+      <!-- Hash Comparison Table for Images -->
+      <table>
+        <thead>
+          <tr>
+            <th>Algorithm</th>
+            <th>File A Hash</th>
+            <th>File B Hash</th>
+            <th>Hamming Distance</th>
+            <th>Similarity</th>
+          </tr>
+        </thead>
+        <tbody id="imageHashBody">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Traditional Cryptographic Hashes Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>🔒 Cryptographic & Fuzzy Hashes Comparison</span>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th style="width:110px;">Hash Type</th>
+            <th>File A (Target)</th>
+            <th>File B (Suspect)</th>
+            <th style="width:130px; text-align:center;">Match Status</th>
+          </tr>
+        </thead>
+        <tbody id="hashTableBody">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Side-by-Side Byte Differences Card -->
+    <div class="card">
+      <div class="card-title">
+        <span>🔬 Byte-Level Differences (<span id="diffBlocksCount">0</span> blocks)</span>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="diff-table">
+          <thead>
+            <tr>
+              <th style="width:120px;">Offset (Hex)</th>
+              <th style="width:80px;">Length</th>
+              <th>File A Hex & ASCII</th>
+              <th>File B Hex & ASCII</th>
+            </tr>
+          </thead>
+          <tbody id="diffBody">
+          </tbody>
+        </table>
+      </div>
+      <div id="diffTruncatedMsg" style="font-size:12px; color:#6b7280; margin-top:8px; display:none;">
+        * Displaying first 150 differing blocks.
+      </div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    function onSelectChange(which) {
+      const select = document.getElementById(`select_${which}`);
+      if (select && select.value) {
+        document.getElementById(`path_${which}`).value = '';
+      }
+    }
+
+    async function browseFile(which) {
+      try {
+        const res = await fetch('/api/pick-path?kind=file');
+        const data = await res.json();
+        if (data.ok && data.path) {
+          document.getElementById(`path_${which}`).value = data.path;
+          const sel = document.getElementById(`select_${which}`);
+          if (sel) sel.value = '';
+        }
+      } catch (err) {
+        alert('Browse failed: ' + err);
+      }
+    }
+
+    async function runComparison() {
+      const idA = document.getElementById('select_a') ? document.getElementById('select_a').value : '';
+      const pathA = document.getElementById('path_a').value.trim();
+      const idB = document.getElementById('select_b') ? document.getElementById('select_b').value : '';
+      const pathB = document.getElementById('path_b').value.trim();
+
+      if (!idA && !pathA) {
+        alert('Please select or specify File A.');
+        return;
+      }
+      if (!idB && !pathB) {
+        alert('Please select or specify File B.');
+        return;
+      }
+
+      const btn = document.getElementById('btnCompare');
+      btn.disabled = true;
+      btn.innerText = '⏳ Analyzing Hashes & Differences...';
+
+      try {
+        const res = await fetch('/api/compare', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id_a: idA,
+            path_a: pathA,
+            id_b: idB,
+            path_b: pathB,
+          }),
+        });
+
+        const data = await res.json();
+        if (!data.ok) {
+          alert('Comparison error: ' + (data.error || 'Failed'));
+          return;
+        }
+
+        renderComparisonResults(data);
+      } catch (err) {
+        alert('Request failed: ' + err);
+      } finally {
+        btn.disabled = false;
+        btn.innerText = '⚖️ Compare Files & Detect Tampering';
+      }
+    }
+
+    function renderComparisonResults(data) {
+      document.getElementById('resultsContainer').style.display = 'block';
+
+      // 1. Verdict Banner
+      const isIdentical = data.hash_match.sha256;
+      const fuzzyScore = data.fuzzy_similarity;
+      const diffBytes = data.byte_diff.differing_bytes;
+
+      let verdictText = '';
+      let badgeHtml = '';
+
+      if (isIdentical) {
+        verdictText = 'Exact Identical Match (Bit-for-Bit Verified)';
+        badgeHtml = '<span class="badge badge-complete" style="font-size:13px; padding:6px 12px;">✅ 100% IDENTICAL</span>';
+      } else if (fuzzyScore >= 85) {
+        verdictText = `Near-Identical File (${fuzzyScore}% Fuzzy Similarity, ${diffBytes} differing bytes)`;
+        badgeHtml = '<span class="badge badge-partial" style="font-size:13px; padding:6px 12px;">⚠️ MODIFIED / TAMPERED</span>';
+      } else if (fuzzyScore >= 50) {
+        verdictText = `Likely Variant / Common Origin (${fuzzyScore}% Fuzzy Similarity)`;
+        badgeHtml = '<span class="badge badge-partial" style="font-size:13px; padding:6px 12px;">🧬 VARIANT / DERIVED</span>';
+      } else {
+        verdictText = `Different Files (${fuzzyScore}% Fuzzy Similarity)`;
+        badgeHtml = '<span class="badge badge-mismatch" style="font-size:13px; padding:6px 12px;">❌ UNRELATED / DIVERGENT</span>';
+      }
+
+      document.getElementById('verdictText').innerText = verdictText;
+      document.getElementById('verdictBadge').innerHTML = badgeHtml;
+
+      // 2. Metrics
+      const sizeA = data.file_a.size;
+      const sizeB = data.file_b.size;
+      const sizeDiff = sizeB - sizeA;
+      document.getElementById('valSizeA').innerText = `${sizeA.toLocaleString()} B`;
+      document.getElementById('valSizeDiff').innerText = `File B: ${sizeB.toLocaleString()} B (Diff: ${sizeDiff >= 0 ? '+' : ''}${sizeDiff} B)`;
+
+      document.getElementById('valFuzzyScore').innerText = `${fuzzyScore}%`;
+      document.getElementById('gaugeFuzzy').style.width = `${fuzzyScore}%`;
+      document.getElementById('valFuzzySubtitle').innerText = data.fuzzy_verdict;
+
+      const byteIdentity = data.byte_diff.similarity_pct;
+      document.getElementById('valByteIdentity').innerText = `${byteIdentity}%`;
+      document.getElementById('gaugeByte').style.width = `${byteIdentity}%`;
+      document.getElementById('valByteSubtitle').innerText = `${diffBytes.toLocaleString()} differing bytes (${data.byte_diff.differing_blocks_count} blocks)`;
+
+      // 3. Image Comparison
+      const imgCard = document.getElementById('imageComparisonCard');
+      const cardVisual = document.getElementById('cardVisual');
+
+      if (data.image_comparison && data.image_comparison.ok) {
+        const ic = data.image_comparison;
+        cardVisual.style.display = 'block';
+        imgCard.style.display = 'block';
+
+        document.getElementById('valVisualScore').innerText = `${ic.composite_similarity}%`;
+        document.getElementById('gaugeVisual').style.width = `${ic.composite_similarity}%`;
+        document.getElementById('valVisualSubtitle').innerText = ic.verdict;
+
+        document.getElementById('imgScoreBig').innerText = `${ic.composite_similarity}%`;
+        document.getElementById('imgVerdictBadge').innerHTML = ic.is_identical
+          ? '<span class="badge badge-complete">Identical Visuals</span>'
+          : '<span class="badge badge-partial">' + ic.verdict + '</span>';
+
+        if (data.file_a.preview_url) {
+          document.getElementById('imgSrcA').src = data.file_a.preview_url;
+          document.getElementById('imgLabelA').innerText = data.file_a.name;
+        }
+        if (data.file_b.preview_url) {
+          document.getElementById('imgSrcB').src = data.file_b.preview_url;
+          document.getElementById('imgLabelB').innerText = data.file_b.name;
+        }
+
+        const imgBody = document.getElementById('imageHashBody');
+        imgBody.innerHTML = `
+          <tr>
+            <td><b>pHash (DCT)</b></td>
+            <td><code>${ic.phash.hash_a}</code></td>
+            <td><code>${ic.phash.hash_b}</code></td>
+            <td><b>${ic.phash.distance} / 64</b></td>
+            <td><b>${ic.phash.similarity}%</b></td>
+          </tr>
+          <tr>
+            <td><b>dHash (Gradient)</b></td>
+            <td><code>${ic.dhash.hash_a}</code></td>
+            <td><code>${ic.dhash.hash_b}</code></td>
+            <td><b>${ic.dhash.distance} / 64</b></td>
+            <td><b>${ic.dhash.similarity}%</b></td>
+          </tr>
+          <tr>
+            <td><b>aHash (Average)</b></td>
+            <td><code>${ic.ahash.hash_a}</code></td>
+            <td><code>${ic.ahash.hash_b}</code></td>
+            <td><b>${ic.ahash.distance} / 64</b></td>
+            <td><b>${ic.ahash.similarity}%</b></td>
+          </tr>
+        `;
+      } else {
+        cardVisual.style.display = 'none';
+        imgCard.style.display = 'none';
+      }
+
+      // 4. Traditional Hashes Table
+      const hashBody = document.getElementById('hashTableBody');
+      const ha = data.file_a.hashes;
+      const hb = data.file_b.hashes;
+
+      function matchBadge(isMatch) {
+        return isMatch
+          ? '<span class="badge badge-complete">MATCH</span>'
+          : '<span class="badge badge-mismatch">MISMATCH</span>';
+      }
+
+      hashBody.innerHTML = `
+        <tr>
+          <td><b>MD5</b></td>
+          <td><code>${ha.md5}</code></td>
+          <td><code>${hb.md5}</code></td>
+          <td style="text-align:center;">${matchBadge(data.hash_match.md5)}</td>
+        </tr>
+        <tr>
+          <td><b>SHA-1</b></td>
+          <td><code>${ha.sha1}</code></td>
+          <td><code>${hb.sha1}</code></td>
+          <td style="text-align:center;">${matchBadge(data.hash_match.sha1)}</td>
+        </tr>
+        <tr>
+          <td><b>SHA-256</b></td>
+          <td><code>${ha.sha256}</code></td>
+          <td><code>${hb.sha256}</code></td>
+          <td style="text-align:center;">${matchBadge(data.hash_match.sha256)}</td>
+        </tr>
+        <tr>
+          <td><b>ssdeep (Fuzzy)</b></td>
+          <td style="word-break:break-all;"><code>${data.file_a.fuzzy}</code></td>
+          <td style="word-break:break-all;"><code>${data.file_b.fuzzy}</code></td>
+          <td style="text-align:center;">
+            <span class="badge ${fuzzyScore >= 85 ? 'badge-partial' : (fuzzyScore > 0 ? 'badge-partial' : 'badge-mismatch')}">
+              ${fuzzyScore}% SIMILAR
+            </span>
+          </td>
+        </tr>
+      `;
+
+      // 5. Byte Diff Table
+      const diffBody = document.getElementById('diffBody');
+      diffBody.innerHTML = '';
+      const blocks = data.byte_diff.diff_blocks || [];
+      document.getElementById('diffBlocksCount').innerText = data.byte_diff.differing_blocks_count;
+      document.getElementById('diffTruncatedMsg').style.display = data.byte_diff.truncated ? 'block' : 'none';
+
+      if (blocks.length === 0) {
+        diffBody.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:18px; color:#15803d; font-weight:600;">No byte differences found. Files are 100% identical!</td></tr>';
+      } else {
+        blocks.forEach(b => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td style="color:#2563eb; font-weight:700;">${b.offset_hex}</td>
+            <td>${b.length} B</td>
+            <td class="diff-a">${b.hex_a} ${b.ascii_a ? `<span style="color:#475569;">|${b.ascii_a}|</span>` : ''}</td>
+            <td class="diff-b">${b.hex_b} ${b.ascii_b ? `<span style="color:#475569;">|${b.ascii_b}|</span>` : ''}</td>
+          `;
+          diffBody.appendChild(tr);
+        });
+      }
+
+      // Scroll smoothly to results
+      document.getElementById('resultsContainer').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // Auto run comparison if query parameters ?a=...&b=... are present
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const a = urlParams.get('a');
+      const b = urlParams.get('b');
+      if (a && b) {
+        runComparison();
+      }
+    });
+  </script>
+{% endblock %}

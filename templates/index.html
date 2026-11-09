@@ -1,0 +1,461 @@
+{% extends "base.html" %}
+
+{% block title %}Forensics Carving Engine - Digital Forensics Tool{% endblock %}
+{% block header_title %}⚡ Forensic File & Disk Carver{% endblock %}
+
+{% block content %}
+  <div class="card">
+    <div class="card-title">
+      <span>Configure Forensic Acquisition & Carving Target</span>
+      {% if has_result %}
+      <div style="display:flex; gap:8px;">
+        <a href="/results" class="btn btn-gray" style="font-size:12px; padding:5px 10px;">📊 View Last Results</a>
+        <a href="/hex" class="btn btn-gray" style="font-size:12px; padding:5px 10px;">🔬 Hex Viewer</a>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if error %}
+      <div style="background:#fee2e2; border:1px solid #fca5a5; color:#991b1b; padding:10px 14px; border-radius:6px; margin-bottom:14px; font-size:13px; font-weight:600;">
+        ⚠️ {{ error }}
+      </div>
+    {% endif %}
+
+    <form method="post" action="/scan" id="scanForm">
+      <div class="row">
+        <div>
+          <label>Source Path *</label>
+          <div class="field">
+            <input id="source_path" name="source_path" required
+              placeholder="H:\path\to\image.dd or \\.\PhysicalDrive0 or C:\folder"
+              value="{{ form.get('source_path', '') }}">
+            <button class="browse" type="button" onclick="pickSource()">Browse</button>
+            <button class="browse" type="button" onclick="openDriveModal('source_path')" title="View Connected Drives">Drives</button>
+          </div>
+        </div>
+        <div>
+          <label>Source Type</label>
+          <div class="field">
+            <select name="source_type" id="source_type" onchange="onSourceTypeChange()">
+              {% set cur_st = form.get('source_type', 'auto') %}
+              <option value="auto" {% if cur_st=='auto' %}selected{% endif %}>auto (Universal Auto Detect - Recommended)</option>
+              <option value="disk_image" {% if cur_st=='disk_image' %}selected{% endif %}>disk_image (RAW / DD / IMG / .001)</option>
+              <option value="physical_drive" {% if cur_st=='physical_drive' %}selected{% endif %}>physical_drive (Hardware Drive)</option>
+              <option value="directory" {% if cur_st=='directory' %}selected{% endif %}>directory (Folder Scan)</option>
+              <option value="file" {% if cur_st=='file' %}selected{% endif %}>file (Single File)</option>
+              <option value="e01" {% if cur_st=='e01' %}selected{% endif %}>e01 (Expert Witness E01)</option>
+              <option value="aff" {% if cur_st=='aff' %}selected{% endif %}>aff (Advanced Forensic AFF)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Scan Mode</label>
+          <select name="scan_mode" id="scan_mode">
+            {% set cur_mode = form.get('scan_mode', 'deep') %}
+            <option value="deep" {% if cur_mode=='deep' %}selected{% endif %}>Deep Carving (Extracts nested artifacts, PDFs, images)</option>
+            <option value="triage" {% if cur_mode=='triage' %}selected{% endif %}>Fast Triage (Rapid header inspection)</option>
+          </select>
+        </div>
+        <div>
+          <label>Analyst Name</label>
+          <input name="analyst" id="analyst" value="{{ form.get('analyst', 'gui_user') }}">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Signature DB Path</label>
+          <input name="signature_db" id="signature_db" value="{{ form.get('signature_db', ':memory:') }}">
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #e5e7eb; padding-top:14px; margin-top:8px;">
+        <label style="margin-bottom:8px;">Advanced Modules & File Extraction:</label>
+        <div class="inline">
+          <label>
+            <input type="checkbox" id="use_yara" name="use_yara" onchange="toggleOptional()" {% if form.get('use_yara') %}checked{% endif %}>
+            Use YARA Rules
+          </label>
+          <label>
+            <input type="checkbox" id="use_plugins" name="use_plugins" onchange="toggleOptional()" {% if form.get('use_plugins') %}checked{% endif %}>
+            Use Plugins Directory
+          </label>
+          <label>
+            <input type="checkbox" id="use_output" name="use_output" onchange="toggleOptional()" {% if form.get('use_output') %}checked{% endif %}>
+            Save Reports to Output Directory
+          </label>
+          <label>
+            <input type="checkbox" id="use_recovered" name="use_recovered" onchange="toggleOptional()" {% if form.get('use_recovered') %}checked{% endif %}>
+            Extract Recovered Files to Directory
+          </label>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>YARA Rules Path</label>
+            <div class="field">
+              <input id="yara_rules" name="yara_rules" placeholder="H:\path\to\rules.yar" value="{{ form.get('yara_rules', '') }}">
+              <button class="browse" type="button" onclick="pickPath('yara_rules','file','Select YARA Rules')">Browse</button>
+            </div>
+          </div>
+          <div>
+            <label>Plugins Directory</label>
+            <div class="field">
+              <input id="plugins_dir" name="plugins_dir" placeholder="H:\path\to\plugins" value="{{ form.get('plugins_dir', '') }}">
+              <button class="browse" type="button" onclick="pickPath('plugins_dir','dir','Select Plugins Directory')">Browse</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Reports Output Directory</label>
+            <div class="field">
+              <input id="output_dir" name="output_dir" placeholder="H:\path\to\gui_output" value="{{ form.get('output_dir', '') }}">
+              <button class="browse" type="button" onclick="pickPath('output_dir','dir','Select Reports Output Directory')">Browse</button>
+            </div>
+          </div>
+          <div>
+            <label>Recovered Files Output Directory</label>
+            <div class="field">
+              <input id="recovered_dir" name="recovered_dir" placeholder="H:\path\to\recovered_files" value="{{ form.get('recovered_dir', '') }}">
+              <button class="browse" type="button" onclick="pickPath('recovered_dir','dir','Select Recovered Files Output Directory')">Browse</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-bottom:0;">
+          <div>
+            <label>Start MB</label>
+            <input name="start_mb" id="start_mb" type="number" min="0" value="{{ form.get('start_mb', '0') }}">
+          </div>
+          <div>
+            <label>Max MB (0 = Scan Entire Stream)</label>
+            <input name="max_mb" id="max_mb" type="number" min="0" value="{{ form.get('max_mb', '0') }}">
+          </div>
+        </div>
+      </div>
+
+      <div class="inline" style="border-top:1px solid #e5e7eb; padding-top:12px; margin-top:14px;">
+        <label>
+          <input type="checkbox" name="recover_fragments" id="recover_fragments" {% if form.get('recover_fragments') %}checked{% endif %}>
+          Recover Fragmented Files
+        </label>
+        <label>
+          <input type="checkbox" name="no_hash" id="no_hash" {% if form.get('no_hash') %}checked{% endif %}>
+          No Hash (Faster Scanning)
+        </label>
+        <label>
+          <input type="checkbox" name="no_entropy" id="no_entropy" {% if form.get('no_entropy') %}checked{% endif %}>
+          No Entropy (Faster Scanning)
+        </label>
+      </div>
+
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:20px;">
+        <button type="submit" id="submitBtn" class="btn" style="padding:10px 24px; font-size:14px;">
+          🚀 Start Forensic Scan
+        </button>
+        {% if has_result %}
+        <div style="display:flex; gap:10px; align-items:center;">
+          <a href="/results" class="btn btn-green">📊 Open Last Results</a>
+          <a href="/hex" class="btn btn-gray">🔬 Open Hex Viewer</a>
+        </div>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+{% endblock %}
+
+{% block modals %}
+  <!-- Live Scan Progress Modal -->
+  <div id="scanModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width: 680px;">
+      <div class="modal-header">
+        <h3 style="margin:0; display:flex; align-items:center;">
+          <span class="pulse-dot" id="scanPulseDot"></span>
+          <span id="scanModalTitle">Forensic Carving in Progress</span>
+        </h3>
+      </div>
+      
+      <div style="font-size:13px; color:#4b5563; margin-top:8px;" id="scanTargetSource">
+        Target Source: <strong id="scanSourceText" style="font-family:monospace; color:#1e40af;">-</strong>
+      </div>
+
+      <div class="progress-box">
+        <div style="display:flex; justify-content:space-between; font-size:13px; font-weight:600; color:#374151;">
+          <span id="scanStatusText">Scanning blocks & carving signatures...</span>
+          <span id="scanPercentText" style="color:#2563eb;">0.0%</span>
+        </div>
+
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="scanProgressFill"></div>
+          <div class="progress-bar-text" id="scanProgressBarText">0%</div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="lbl">⏱️ Elapsed Time</div>
+            <div class="val" id="scanElapsed">00:00:00</div>
+          </div>
+          <div class="stat-card">
+            <div class="lbl">⏳ Remaining ETA</div>
+            <div class="val" id="scanRemaining">--:--:--</div>
+          </div>
+          <div class="stat-card">
+            <div class="lbl">📅 Total Estimated</div>
+            <div class="val" id="scanTotalTime">--:--:--</div>
+          </div>
+          <div class="stat-card">
+            <div class="lbl">⚡ Speed</div>
+            <div class="val" id="scanSpeed">0.0 MB/s</div>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:13px; color:#4b5563; border-top:1px solid #e5e7eb; padding-top:10px;">
+          <div>Data Scanned: <strong id="scanDataScanned">0 MB</strong> / <span id="scanTotalBytes">--</span></div>
+          <div>Recovered Evidence: <strong id="scanFilesCount" style="color:#2563eb;">0 files</strong></div>
+        </div>
+      </div>
+
+      <div style="margin-top:18px; display:flex; justify-content:space-between; align-items:center;">
+        <button type="button" class="btn-stop" id="stopScanBtn" onclick="requestStopScan()">
+          🛑 Stop Scan
+        </button>
+        <div id="scanFeedbackMsg" style="font-size:13px; font-weight:600; color:#4b5563;"></div>
+      </div>
+    </div>
+  </div>
+
+  {% include "components/drive_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    // Field IDs to persist in localStorage
+    const PERSIST_FIELDS = [
+      "source_path", "source_type", "scan_mode", "analyst", "signature_db",
+      "yara_rules", "plugins_dir", "output_dir", "recovered_dir", "start_mb", "max_mb",
+      "use_yara", "use_plugins", "use_output", "use_recovered", "recover_fragments", "no_hash", "no_entropy"
+    ];
+
+    function saveState() {
+      PERSIST_FIELDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.type === "checkbox") {
+          localStorage.setItem("ft_" + id, el.checked ? "1" : "0");
+        } else {
+          localStorage.setItem("ft_" + id, el.value);
+        }
+      });
+    }
+
+    function restoreState() {
+      PERSIST_FIELDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const val = localStorage.getItem("ft_" + id);
+        if (val === null) return;
+        if (el.type === "checkbox") {
+          if (!el.checked && val === "1") el.checked = true;
+        } else {
+          if (!el.value.trim() && val) el.value = val;
+        }
+      });
+    }
+
+    function toggleOptional() {
+      const useYara = document.getElementById("use_yara").checked;
+      const usePlugins = document.getElementById("use_plugins").checked;
+      const useOutput = document.getElementById("use_output").checked;
+      const useRecovered = document.getElementById("use_recovered").checked;
+
+      document.getElementById("yara_rules").disabled = !useYara;
+      document.getElementById("plugins_dir").disabled = !usePlugins;
+      document.getElementById("output_dir").disabled = !useOutput;
+      document.getElementById("recovered_dir").disabled = !useRecovered;
+      saveState();
+    }
+
+    function onSourceTypeChange() {
+      const st = document.getElementById("source_type").value;
+      if (st === "physical_drive") {
+        openDriveModal("source_path");
+      }
+      saveState();
+    }
+
+    function pickSource() {
+      const st = document.getElementById("source_type").value;
+      if (st === "directory") {
+        pickPath("source_path", "dir", "Select Directory to Carve");
+      } else if (st === "physical_drive") {
+        openDriveModal("source_path");
+      } else {
+        pickPath("source_path", "file", "Select Source File");
+      }
+    }
+
+    // Bind inputs to saveState on changes
+    PERSIST_FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener("input", saveState);
+        el.addEventListener("change", saveState);
+      }
+    });
+
+    // Live Scan Progress & Stop Logic
+    let progressTimer = null;
+
+    function openScanModal(source) {
+      const modal = document.getElementById("scanModal");
+      modal.style.display = "flex";
+      if (source) document.getElementById("scanSourceText").textContent = source;
+      document.getElementById("scanStatusText").textContent = "Scanning blocks & carving signatures...";
+      document.getElementById("scanFeedbackMsg").textContent = "";
+      const stopBtn = document.getElementById("stopScanBtn");
+      stopBtn.disabled = false;
+      stopBtn.textContent = "🛑 Stop Scan";
+      stopBtn.style.display = "inline-flex";
+      document.getElementById("scanPulseDot").style.background = "#10b981";
+    }
+
+    function startPollingProgress() {
+      if (progressTimer) clearInterval(progressTimer);
+      progressTimer = setInterval(pollProgress, 600);
+      pollProgress();
+    }
+
+    async function pollProgress() {
+      try {
+        const res = await fetch("/api/scan/progress");
+        const data = await res.json();
+
+        if (data.status === "idle") return;
+
+        if (data.source_path) {
+          document.getElementById("scanSourceText").textContent = data.source_path;
+        }
+
+        const pct = Math.min(100, Math.max(0, data.percent || 0));
+        document.getElementById("scanProgressFill").style.width = pct + "%";
+        document.getElementById("scanProgressBarText").textContent = pct.toFixed(1) + "%";
+        document.getElementById("scanPercentText").textContent = pct.toFixed(1) + "%";
+
+        document.getElementById("scanElapsed").textContent = data.elapsed_str || "00:00:00";
+        document.getElementById("scanRemaining").textContent = data.eta_str || "--:--:--";
+        document.getElementById("scanTotalTime").textContent = data.total_time_str || "--:--:--";
+        document.getElementById("scanSpeed").textContent = (data.speed_mb_s || 0).toFixed(1) + " MB/s";
+
+        document.getElementById("scanDataScanned").textContent = formatBytes(data.current_bytes);
+        document.getElementById("scanTotalBytes").textContent = data.total_bytes > 0 ? formatBytes(data.total_bytes) : "Scanning to EOF";
+        document.getElementById("scanFilesCount").textContent = (data.files_found || 0) + " files";
+
+        if (data.status === "stopping") {
+          document.getElementById("scanStatusText").textContent = "Stopping scan... Finalizing recovered files...";
+          const stopBtn = document.getElementById("stopScanBtn");
+          stopBtn.disabled = true;
+          stopBtn.textContent = "Stopping...";
+          document.getElementById("scanPulseDot").style.background = "#f59e0b";
+        } else if (data.status === "completed" || data.status === "stopped") {
+          clearInterval(progressTimer);
+          progressTimer = null;
+          document.getElementById("scanProgressFill").style.width = "100%";
+          document.getElementById("scanProgressBarText").textContent = "100%";
+          document.getElementById("scanPulseDot").style.background = "#2563eb";
+          const isStopped = data.status === "stopped";
+          document.getElementById("scanStatusText").textContent = isStopped ? "Scan Stopped! Finalizing evidence..." : "Scan Complete!";
+          document.getElementById("scanFeedbackMsg").textContent = "Redirecting to results page...";
+          setTimeout(() => {
+            window.location.href = "/results";
+          }, 800);
+        } else if (data.status === "error") {
+          clearInterval(progressTimer);
+          progressTimer = null;
+          document.getElementById("scanStatusText").textContent = "Scan Error: " + (data.error || "Unknown");
+          document.getElementById("scanPulseDot").style.background = "#ef4444";
+          const stopBtn = document.getElementById("stopScanBtn");
+          stopBtn.textContent = "Close";
+          stopBtn.disabled = false;
+          stopBtn.onclick = () => {
+            document.getElementById("scanModal").style.display = "none";
+            const submitBtn = document.getElementById("submitBtn");
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = "Start Scan";
+            }
+          };
+        }
+      } catch (e) {
+        console.error("Progress poll error:", e);
+      }
+    }
+
+    async function requestStopScan() {
+      const btn = document.getElementById("stopScanBtn");
+      btn.disabled = true;
+      btn.textContent = "Stopping...";
+      document.getElementById("scanStatusText").textContent = "Sending stop signal...";
+      try {
+        await fetch("/api/scan/stop", { method: "POST" });
+      } catch (e) {
+        console.error("Stop request error:", e);
+      }
+    }
+
+    // Intercept form submit for live asynchronous scan
+    const scanFormEl = document.getElementById("scanForm");
+    if (scanFormEl) {
+      scanFormEl.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        const submitBtn = document.getElementById("submitBtn");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Starting Scan...";
+
+        const formData = new FormData(scanFormEl);
+
+        try {
+          const res = await fetch("/scan", {
+            method: "POST",
+            body: formData,
+            headers: { "X-Requested-With": "XMLHttpRequest" }
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            alert("Could not start scan: " + (data.error || "Unknown error"));
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Start Scan";
+            return;
+          }
+
+          openScanModal(formData.get("source_path"));
+          startPollingProgress();
+        } catch (err) {
+          alert("Connection error: " + err);
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Start Scan";
+        }
+      });
+    }
+
+    // Restore state and configure initial UI
+    restoreState();
+    toggleOptional();
+
+    // Check if a scan is already active in background
+    window.addEventListener("DOMContentLoaded", async () => {
+      try {
+        const res = await fetch("/api/scan/progress");
+        const data = await res.json();
+        if (data.status === "running" || data.status === "stopping") {
+          openScanModal(data.source_path);
+          startPollingProgress();
+        }
+      } catch (e) {}
+    });
+  </script>
+{% endblock %}

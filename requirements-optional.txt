@@ -1,0 +1,22 @@
+# Optional dependencies for specialized forensic capabilities and extensions
+
+# Core Web GUI & PDF Reporting
+-r requirements.txt
+
+# Advanced PDF Digital Signatures (RFC 3161 / CMS)
+pyHanko>=0.14.0
+
+# Advanced Metadata Extraction
+iptcinfo3>=2.1.4
+
+# Desktop GUI (PyQt5) & Standalone Packaging
+PyQt5>=5.15.0
+pyinstaller>=5.0.0
+
+# YARA Malware Pattern Matching
+yara-python>=4.2.0
+
+# Proprietary Forensic Image Formats (Expert Witness E01 & AFF4)
+# Note: Requires native C development libraries (libewf / libaff4). Uncomment if available on your platform:
+# pyewf
+# pyaff4

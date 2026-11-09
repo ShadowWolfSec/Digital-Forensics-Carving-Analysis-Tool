@@ -1,0 +1,13 @@
+<!-- Drive Selection Modal Component -->
+<div id="driveModal" class="modal" style="display:none;">
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <h3>Connected Drives & Forensic Devices</h3>
+      <button type="button" class="close-btn" onclick="closeDriveModal()">&times;</button>
+    </div>
+    <div id="drivesStatus" style="font-size:13px; color:#6b7280; margin-bottom:12px;">Scanning system drives...</div>
+    <div id="drivesContainer" style="max-height: 380px; overflow-y: auto;">
+      <!-- Populated dynamically via openDriveModal() -->
+    </div>
+  </div>
+</div>
